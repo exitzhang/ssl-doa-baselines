@@ -123,7 +123,13 @@ silence-frame false peaks, matching LOCATA's evaluator.
 ## Queue submission
 
 Training must run through `gpu_queue` (foreground command, train + eval share
-one slot).  Example job manifest:
+one slot).  `--locata-root` is pinned to a dedicated worktree of the LOCATA
+`dev` branch (`/home/t-zhangchaoqin/projects/ssl/wt/locata-dev`, `54ffaa6`), so
+the shared checkout used by running V5 ablations can change branches without
+moving the baselines' code version.  Each run records the actual LOCATA
+commit/branch/dirty flag under `config.json -> locata`.
+
+Example job manifest:
 
 ```json
 {
@@ -185,8 +191,9 @@ Smoke tests (GPU forward, native decode, checkpoint reload) pass for all three
 models; the 20-case CPU unit suite covers shapes, PIT invariance, IDL on ideal
 DP-IPD, label conversion, SRP steering and the import boundary.
 
-On 2026-11-10 the three formal jobs (`tf_mamba_spectrum_s42`,
-`icocnn_multi_s42`, `srp_dnn_idl_s42`) were submitted to `gpu_queue` with the
-shared 15-epoch budget.  The queue was fully occupied by the ongoing V5
-ablations, so they ran after those slots freed.  Results are filled into
-`RESULTS.md` as each job finishes.
+On 2026-11-10 the three formal jobs (`tf_mamba_spectrum_s42_dev`,
+`icocnn_multi_s42_dev`, `srp_dnn_idl_s42_dev`) were submitted to `gpu_queue`
+with the shared 15-epoch budget and `--locata-root` pinned to the `dev`
+worktree.  The queue was fully occupied by the ongoing V5 ablations, so they
+ran after those slots freed.  Results are filled into `RESULTS.md` as each job
+finishes.

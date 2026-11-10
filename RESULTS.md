@@ -9,13 +9,18 @@ simulated validation set; DICIT curves are reported separately.
 The upstream 200-epoch recipes remain in the configs; the actual values are
 recorded in each `config.json`.  Jobs: `queue/external_baselines_2026-11-10.json`.
 
+**LOCATA pin.**  Every run imports LOCATA from the `dev` worktree
+`/home/t-zhangchaoqin/projects/ssl/wt/locata-dev` (`54ffaa6`, clean).  The
+shared checkout `/projects/ssl/LOCATA` stays on the V5 ablation branch, which
+the running ablation jobs use for their own sweep step.
+
 ## DICIT test — locked validation working point
 
 | Method | Run | F1@10° | 1-src F1 | 2-src F1 | 3-src F1 | FAR | R@FAR 3% | MAE (°) | Params | Forward ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| TF-Mamba | `tf_mamba_spectrum_s42` | — | — | — | — | — | — | — | 1.41 M | — |
-| IcoCNN (multi-source) | `icocnn_multi_s42` | — | — | — | — | — | — | — | 6.41 M | — |
-| SRP-DNN | `srp_dnn_idl_s42` | — | — | — | — | — | — | — | 0.86 M | — |
+| TF-Mamba | `tf_mamba_spectrum_s42_dev` | — | — | — | — | — | — | — | 1.41 M | — |
+| IcoCNN (multi-source) | `icocnn_multi_s42_dev` | — | — | — | — | — | — | — | 6.41 M | — |
+| SRP-DNN | `srp_dnn_idl_s42_dev` | — | — | — | — | — | — | — | 0.86 M | — |
 
 DICIT frame counts (for reference): 926 frames total, 176 / 379 / 371 for
 1 / 2 / 3 sources; the actual counts are written in each `eval_dicit.json`.

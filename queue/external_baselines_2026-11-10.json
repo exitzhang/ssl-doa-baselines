@@ -1,12 +1,12 @@
 {
   "jobs": [
     {
-      "id": "tf_mamba_spectrum_s42",
+      "id": "tf_mamba_spectrum_s42_dev",
       "cwd": "/home/t-zhangchaoqin/projects/ssl/ssl-doa-baselines",
       "argv": [
         "/home/t-zhangchaoqin/.conda/envs/locata/bin/python",
         "integrations/locata/train_then_eval.py",
-        "--locata-root", "/home/t-zhangchaoqin/projects/ssl/LOCATA",
+        "--locata-root", "/home/t-zhangchaoqin/projects/ssl/wt/locata-dev",
         "--config", "integrations/locata/configs/tf_mamba_dicit.toml",
         "--data-config", "integrations/locata/configs/data_local.toml",
         "--output", "runs/tf_mamba_spectrum_s42",
@@ -17,12 +17,12 @@
       "timeout_seconds": 129600
     },
     {
-      "id": "icocnn_multi_s42",
+      "id": "icocnn_multi_s42_dev",
       "cwd": "/home/t-zhangchaoqin/projects/ssl/ssl-doa-baselines",
       "argv": [
         "/home/t-zhangchaoqin/.conda/envs/locata/bin/python",
         "integrations/locata/train_then_eval.py",
-        "--locata-root", "/home/t-zhangchaoqin/projects/ssl/LOCATA",
+        "--locata-root", "/home/t-zhangchaoqin/projects/ssl/wt/locata-dev",
         "--config", "integrations/locata/configs/icocnn_dicit.toml",
         "--data-config", "integrations/locata/configs/data_local.toml",
         "--output", "runs/icocnn_multi_s42",
@@ -33,12 +33,12 @@
       "timeout_seconds": 129600
     },
     {
-      "id": "srp_dnn_idl_s42",
+      "id": "srp_dnn_idl_s42_dev",
       "cwd": "/home/t-zhangchaoqin/projects/ssl/ssl-doa-baselines",
       "argv": [
         "/home/t-zhangchaoqin/.conda/envs/locata/bin/python",
         "integrations/locata/train_then_eval.py",
-        "--locata-root", "/home/t-zhangchaoqin/projects/ssl/LOCATA",
+        "--locata-root", "/home/t-zhangchaoqin/projects/ssl/wt/locata-dev",
         "--config", "integrations/locata/configs/srp_dnn_dicit.toml",
         "--data-config", "integrations/locata/configs/data_local.toml",
         "--output", "runs/srp_dnn_idl_s42",
