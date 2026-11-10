@@ -104,6 +104,9 @@ runs/<name>/
 `eval --split dicit --validation .../validation.json` writes `eval_dicit.json`
 with the locked point, per-source-count metrics, the full test curve and
 `R@FAR 3%` interpolation (only when two measured points bracket 3% FAR).
+It also stores `predictions.gt` / `predictions.pred` at the locked point (one
+angle set per frame, plain floats) so individual frames can be re-checked, plus
+`forward_ms_per_frame` and `decode_ms_per_frame`.
 
 ### Metrics
 

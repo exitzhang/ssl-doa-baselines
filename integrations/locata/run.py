@@ -272,7 +272,7 @@ def _evaluate(model, cfg: Dict[str, Any], *, split: str, device: str,
                                             batch_size=batch_size, num_workers=workers)
 
     if model.model_name == "tf_mamba":
-        return adapter.eval_spectrum(
+        spectrum = adapter.eval_spectrum(
             model, loader, device=device,
             ratios=decode_cfg.get("ratio_thresholds", [0.01, 0.02, 0.05, 0.075, 0.1,
                                                         0.15, 0.2, 0.25, 0.3, 0.4,
@@ -280,6 +280,11 @@ def _evaluate(model, cfg: Dict[str, Any], *, split: str, device: str,
             acc_thresholds=acc, max_sources=max_sources,
             silence_max_thresh=silence,
         )
+        # run_forward_cache reports ms per batch; normalise to per clip so the
+        # number is comparable with the candidate-path models.
+        spectrum["forward_ms_per_frame"] = (
+            float(spectrum["forward_ms_per_batch"]) / float(batch_size))
+        return spectrum
 
     cache = adapter.cache_candidates(model, loader, device=device,
                                      max_sources=max_sources,
@@ -311,6 +316,50 @@ def _decoded(model, cache: Dict[str, Any], key: str, decode_cfg, split: str,
     return adapter.decoded_at_threshold(cache, float(key), max_sources=max_sources)
 
 
+def _plain_angles(rows) -> List[List[float]]:
+    """Coerce decoded/label angle sets to plain floats so JSON has no numpy."""
+    return [[float(a), float(e)] for a, e in rows]
+
+
+def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
+                  cfg: Dict[str, Any], decode_cfg: Dict[str, Any], split: str,
+                  acc, checkpoint: str, decode_s: float,
+                  locata_root: str) -> Dict[str, Any]:
+    """Assemble ``eval_<split>.json``; kept separate so it can be tested."""
+    far_target = float(decode_cfg.get("far_target", 0.03))
+    frames = max(int(result["frames"]), 1)
+    return {
+        "model": model.model_name,
+        "checkpoint": str(Path(checkpoint).resolve()),
+        "split": split,
+        "frames": result["frames"],
+        "source_count_dist": result["source_count_dist"],
+        "working_point": locked,
+        "metrics": locked,
+        "by_source_count": adapter.score_by_source_count(
+            result["gts"], pred_all, acc_thresholds=acc),
+        "curve": result["metrics_by_key"],
+        "r_at_far_3": adapter.interpolate_at_far(
+            result["metrics_by_key"], far_target,
+            int(decode_cfg.get("source_column", 10)),
+        ),
+        # Per-frame output at the locked point, for reviewing individual frames.
+        "predictions": {
+            "gt": [_plain_angles(g) for g in result["gts"]],
+            "pred": [_plain_angles(p) for p in pred_all],
+        },
+        "forward_ms_per_frame": (
+            None if result.get("forward_ms_per_frame") is None
+            else float(result["forward_ms_per_frame"])),
+        "forward_ms_per_batch": result.get("forward_ms_per_batch"),
+        "decode_ms_per_frame": 1000.0 * float(decode_s) / frames,
+        "elapsed_s": result.get("elapsed_s"),
+        "config": _resolved_config(cfg, checkpoint=str(Path(checkpoint).resolve())),
+        "locata": adapter.git_state(locata_root),
+        "baselines": adapter.git_state(str(REPO_ROOT)),
+    }
+
+
 def cmd_eval(args) -> int:
     cfg = _load_cfg(args)
     decode_cfg = dict(cfg.get("decode", {}))
@@ -332,30 +381,15 @@ def cmd_eval(args) -> int:
                                             int(decode_cfg.get("source_column", 10)))
 
     key = str(locked["key"])
+    t_decode = time.time()
     pred_all = _decoded(model, result, key, decode_cfg, split, max_sources)
-    grouped = adapter.score_by_source_count(result["gts"], pred_all,
-                                            acc_thresholds=acc)
-    far_target = float(decode_cfg.get("far_target", 0.03))
-    payload = {
-        "model": model.model_name,
-        "checkpoint": str(Path(args.checkpoint).resolve()),
-        "split": split,
-        "frames": result["frames"],
-        "source_count_dist": result["source_count_dist"],
-        "working_point": locked,
-        "metrics": locked,
-        "by_source_count": grouped,
-        "curve": result["metrics_by_key"],
-        "r_at_far_3": adapter.interpolate_at_far(
-            result["metrics_by_key"], far_target,
-            int(decode_cfg.get("source_column", 10)),
-        ),
-        "forward_ms_per_batch": result.get("forward_ms_per_batch"),
-        "elapsed_s": result.get("elapsed_s"),
-        "config": _resolved_config(cfg, checkpoint=str(Path(args.checkpoint).resolve())),
-        "locata": adapter.git_state(str(locata_root)),
-        "baselines": adapter.git_state(str(REPO_ROOT)),
-    }
+    decode_s = time.time() - t_decode
+    payload = _eval_payload(
+        model=model, result=result, pred_all=pred_all, locked=locked, cfg=cfg,
+        decode_cfg=decode_cfg, split=split, acc=acc,
+        checkpoint=args.checkpoint, decode_s=decode_s,
+        locata_root=str(locata_root),
+    )
     out = Path(args.output) if args.output else Path(args.checkpoint).parent / f"eval_{split}.json"
     adapter.write_json(out, payload)
     m = locked
