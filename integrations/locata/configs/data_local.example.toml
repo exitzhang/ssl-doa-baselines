@@ -1,0 +1,11 @@
+# Copy to data_local.toml and point at your datasets / geometry source.
+[data]
+train_root = "/path/to/train_clean100_edge10"
+val_root = "/path/to/locata_simulated_train_maxsource3_val12000_edge10"
+dicit_root = "/path/to/dicit_frame_dataset_maxsource3"
+# Directory containing dataset_meta.json, or the JSON file itself.
+mic_positions_source = "/path/to/train_clean100_edge10"
+diffuse_noise_dir = "/path/to/MS-SNSD-master"
+real_noise_dir = "/path/to/diffuse_noise"
+eval_batch_size = 4
+eval_num_workers = 8

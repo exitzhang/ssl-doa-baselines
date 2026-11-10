@@ -1,0 +1,54 @@
+# Multi-source IcoCNN: spherical SRP-PHAT + icosahedral CNN + ACCDOA slots.
+[run]
+seed = 42
+output_root = "runs"
+
+[model]
+name = "icocnn"
+n_mics = 3
+sample_rate = 48000
+r = 3
+srp_win = 12288
+srp_hop = 1536
+width = 128
+temporal_kernel = 5
+n_slots = 10
+smooth_vertices = true
+
+[train]
+epochs = 200
+batch_size = 8
+num_workers = 8
+lr = 1.0e-3
+optimizer = "adamw"
+weight_decay = 0.01
+scheduler = "cosine"
+eta_min = 1.0e-6
+grad_clip = 1.0
+eval_every = 2
+patience = 8
+amp = true
+seed = 42
+
+[data]
+max_sources = 3
+target_num_samples = 16000
+mic_indices = [5, 6, 8]
+use_aug = true
+enable_noise = true
+noise_snr = [5.0, 30.0]
+val_noise_snr = [5.0, 30.0]
+noise_mix_weights = [1.0, 0.0, 1.0]
+
+[decode]
+score_thresholds = [
+  0.0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5,
+  0.6, 0.7, 0.8, 0.9,
+]
+acc_thresholds = [5, 10, 15]
+max_sources = 3
+frame_index = -1
+source_column = 10
+silence_max_thresh_val = 0.0
+silence_max_thresh_dicit = 0.1
+far_target = 0.03
