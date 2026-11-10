@@ -1,0 +1,169 @@
+# ssl-doa-baselines
+
+Independent implementations of three external multi-source DOA baselines, with
+a thin LOCATA adapter that reuses LOCATA's own datasets, trainer and scorer.
+
+| Key | Model | Native output | Decoder |
+|---|---|---|---|
+| `tf_mamba` | TF-Mamba (bidirectional temporal / frequency Mamba) | azimuth spectrum `(B, 181)` | shared peak decoder |
+| `icocnn` | multi-source IcoCNN (spherical SRP-PHAT + icosahedral CNN) | ACCDOA slots `(B, T, 10, 3)` | activity threshold, top-3 |
+| `srp_dnn` | SRP-DNN (causal CRNN + mixed DP-IPD) | mixed DP-IPD `(B, T, 2F, P)` | iterative detection & localization |
+
+The package itself never imports LOCATA.  `integrations/locata/` is the only
+boundary and is loaded only by the external runner.
+
+## Install
+
+```bash
+conda activate locata                     # Python 3.8, torch 2.2.1, CUDA
+pip install -e ".[all]"                   # numpy/scipy/soundfile/tomli + einops
+pip install mamba-ssm==2.1.0 --no-build-isolation   # if not already present
+```
+
+`mamba-ssm` is only needed for `tf_mamba`; it requires a CUDA build.  The other
+two models run on CPU (slowly) or GPU.
+
+## Package API
+
+```python
+from ssl_doa_baselines.api import build_model, load_model, predict, predict_native
+
+model = build_model("srp_dnn", {
+    "n_mics": 3,
+    "mic_positions": [[0.04, 0.0, 1.2], [0.0, 0.0, 1.2], [-0.04, 0.0, 1.2]],
+})
+model = load_model("runs/srp_dnn/checkpoint.pth", device="cuda")
+detections = predict(model, waveform, decode={"threshold_abs": 0.3,
+                                              "max_sources": 3})
+# [[{"azimuth_deg": ..., "elevation_deg": ..., "score": ...}, ...], ...]
+```
+
+`waveform` is `(T, C)` or `(B, T, C)` at 48 kHz.  Checkpoints written by
+`save_checkpoint` embed the model config and are reloadable without passing it.
+
+Angles use **zenith elevation**: `u = [sin(el)cos(az), sin(el)sin(az), cos(el)]`,
+so a horizontal source has `el = 90`.  DICIT metadata already follows this.
+LOCATA simulated metadata stores elevation from the horizontal plane; the
+adapter converts it with `el_zenith = 90 - el_sim`.
+
+## Smoke tests
+
+CPU-only unit tests (TF-Mamba is skipped without CUDA):
+
+```bash
+python -m pytest tests -q
+```
+
+End-to-end GPU smoke for one model (forward, native decode, checkpoint reload):
+
+```bash
+python integrations/locata/run.py \
+  --locata-root /path/to/LOCATA \
+  --config integrations/locata/configs/icocnn_dicit.toml \
+  --data-config integrations/locata/configs/data_local.toml \
+  --output /tmp/icocnn_smoke --device cuda:0 smoke
+```
+
+## LOCATA training and evaluation
+
+Copy the machine-specific data config and edit the paths:
+
+```bash
+cp integrations/locata/configs/data_local.example.toml \
+   integrations/locata/configs/data_local.toml
+```
+
+Train, lock the operating point on the simulated validation set, then evaluate
+on DICIT:
+
+```bash
+python integrations/locata/train_then_eval.py \
+  --locata-root /path/to/LOCATA \
+  --config integrations/locata/configs/tf_mamba_dicit.toml \
+  --data-config integrations/locata/configs/data_local.toml \
+  --output runs/tf_mamba_spectrum_s42 --seed 42 --device-index 0
+```
+
+`train` alone writes:
+
+```
+runs/<name>/
+  checkpoint.pth      # embedded model config, best validation epoch
+  validation.json     # full threshold curve + locked working point
+  config.json         # resolved config, both git commits, dirty flags
+  train.log           # TF-Mamba only (LOCATA Trainer log)
+```
+
+`eval --split dicit --validation .../validation.json` writes `eval_dicit.json`
+with the locked point, per-source-count metrics, the full test curve and
+`R@FAR 3%` interpolation (only when two measured points bracket 3% FAR).
+
+### Metrics
+
+All scoring calls LOCATA's `engine/sweep_eval.py` and
+`engine/metrics.py` (`score_decoded`), with 10° one-to-one matching and
+azimuth-only error.  TF-Mamba reuses the same spectrum cache + peak decoder as
+`run_pr_sweep.py`; IcoCNN and SRP-DNN cache native `(score, az, el)`
+candidates and sweep their own absolute threshold.  Operating points are locked
+on the simulated validation set by maximum `F1@10°` (tie-break: lower FAR).
+
+Grouping by true source count is computed with the same matcher.  FAR keeps
+silence-frame false peaks, matching LOCATA's evaluator.
+
+## Queue submission
+
+Training must run through `gpu_queue` (foreground command, train + eval share
+one slot).  Example job manifest:
+
+```json
+{
+  "jobs": [
+    {
+      "id": "tf_mamba_spectrum_s42",
+      "cwd": "/path/to/ssl-doa-baselines",
+      "gpu": 0,
+      "argv": [
+        "/home/t-zhangchaoqin/.conda/envs/locata/bin/python",
+        "integrations/locata/train_then_eval.py",
+        "--locata-root", "/path/to/LOCATA",
+        "--config", "integrations/locata/configs/tf_mamba_dicit.toml",
+        "--data-config", "integrations/locata/configs/data_local.toml",
+        "--output", "runs/tf_mamba_spectrum_s42",
+        "--seed", "42", "--device-index", "0"
+      ]
+    }
+  ]
+}
+```
+
+```bash
+PYTHONPATH=/path/to/Record/queue \
+GPU_QUEUE_CONFIG=/path/to/Record/queue/gpu-queue.config.json \
+python -m gpu_queue submit /path/to/Record/queue/state jobs.json
+```
+
+Submit `icocnn_multi_s42` and `srp_dnn_idl_s42` the same way with their configs.
+
+## Layout
+
+```
+src/ssl_doa_baselines/
+  api.py config.py geometry.py training.py cli.py
+  tf_mamba/  model.py decode.py
+  icocnn/    model.py srp.py grid.py conv.py accdoa.py
+  srp_dnn/   model.py stft.py dpipd.py idl.py
+integrations/locata/
+  adapter.py            data / labels / training / scoring bridge
+  run.py                smoke | train | eval
+  train_then_eval.py    gpu_queue foreground wrapper
+  configs/              one TOML recipe per model + data_local.example.toml
+examples/make_synthetic.py
+tests/
+```
+
+## Status
+
+Smoke tests (GPU forward, native decode, checkpoint reload) pass for all three
+models; the CPU unit suite covers shapes, PIT invariance, IDL on ideal DP-IPD,
+label conversion and the import boundary.  Formal runs and the main table are
+filled in `RESULTS.md` after the queued jobs finish.
