@@ -137,6 +137,7 @@ def cmd_fit(args) -> int:
         device=args.device,
         lr=float(train_cfg.get("lr", 1e-4)),
         weight_decay=float(train_cfg.get("weight_decay", 0.01)),
+        optimizer=str(train_cfg.get("optimizer", "adamw")),
         scheduler=train_cfg.get("scheduler", "cosine"),
         eta_min=float(train_cfg.get("eta_min", 1e-6)),
         amp=bool(train_cfg.get("amp", args.device.startswith("cuda"))),

@@ -46,6 +46,13 @@ so a horizontal source has `el = 90`.  DICIT metadata already follows this.
 LOCATA simulated metadata stores elevation from the horizontal plane; the
 adapter converts it with `el_zenith = 90 - el_sim`.
 
+Azimuth follows the project label frame.  On real DICIT frames the GCC lag of
+`X_k conj(X_l)` is `-(p_k - p_l)·u_label/c`, i.e. the label frame is mirrored
+relative to the raw room coordinates.  The SRP front end therefore steers with
+`(p_l - p_k)·u`; with that convention its peaks track DICIT single-source
+labels to ~6° MAE.  `examples/make_synthetic.py` generates clips in the same
+convention.
+
 ## Smoke tests
 
 CPU-only unit tests (TF-Mamba is skipped without CUDA):
@@ -144,6 +151,14 @@ python -m gpu_queue submit /path/to/Record/queue/state jobs.json
 
 Submit `icocnn_multi_s42` and `srp_dnn_idl_s42` the same way with their configs.
 
+### Shared training budget
+
+The configs keep the upstream 200-epoch recipes.  The first formal pass uses
+`--epochs 15` for all three methods (15 × 94,067 = 1.41M samples, seed 42), so
+the three lines see the same sample budget and fit the current queue.  The
+actual epoch count and budget are recorded in each `config.json`.  The
+submitted manifest is `queue/external_baselines_2026-11-10.json`.
+
 ## Layout
 
 ```
@@ -164,6 +179,11 @@ tests/
 ## Status
 
 Smoke tests (GPU forward, native decode, checkpoint reload) pass for all three
-models; the CPU unit suite covers shapes, PIT invariance, IDL on ideal DP-IPD,
-label conversion and the import boundary.  Formal runs and the main table are
-filled in `RESULTS.md` after the queued jobs finish.
+models; the 20-case CPU unit suite covers shapes, PIT invariance, IDL on ideal
+DP-IPD, label conversion, SRP steering and the import boundary.
+
+On 2026-11-10 the three formal jobs (`tf_mamba_spectrum_s42`,
+`icocnn_multi_s42`, `srp_dnn_idl_s42`) were submitted to `gpu_queue` with the
+shared 15-epoch budget.  The queue was fully occupied by the ongoing V5
+ablations, so they ran after those slots freed.  Results are filled into
+`RESULTS.md` as each job finishes.
