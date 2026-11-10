@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+*.pth
+*.pt
+*.log
+outputs/
+runs/
+integrations/locata/configs/data_local.toml
