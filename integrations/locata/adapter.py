@@ -158,6 +158,10 @@ def build_heatmap_dataset(root: str, data_cfg: Dict[str, Any], *,
 
 def build_loader(dataset: Dataset, *, batch_size: int, num_workers: int,
                  shuffle: bool, collate=None, drop_last: bool = False) -> DataLoader:
+    if collate is None:
+        collate = angle_batch_collate
+    elif collate is False:
+        collate = None
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -165,7 +169,7 @@ def build_loader(dataset: Dataset, *, batch_size: int, num_workers: int,
         num_workers=num_workers,
         pin_memory=True,
         drop_last=drop_last,
-        collate_fn=collate or angle_batch_collate,
+        collate_fn=collate,
     )
 
 
@@ -228,9 +232,9 @@ def train_tf_mamba(model, data_cfg, train_cfg, *, device_index: int,
     train_ds = build_heatmap_dataset(data_cfg["train_root"], data_cfg, use_val=False)
     val_ds = build_heatmap_dataset(data_cfg["val_root"], data_cfg, use_val=True)
     train_loader = build_loader(train_ds, batch_size=batch_size, num_workers=workers,
-                                shuffle=True, drop_last=True)
+                                shuffle=True, drop_last=True, collate=False)
     val_loader = build_loader(val_ds, batch_size=batch_size, num_workers=workers,
-                              shuffle=False)
+                              shuffle=False, collate=False)
 
     optimizer, scheduler = _optimizer_and_scheduler(model, train_cfg, epochs)
     trainer = sym["Trainer"](

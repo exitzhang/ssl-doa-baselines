@@ -34,6 +34,8 @@ def main(argv=None) -> int:
     p.add_argument("--output", required=True)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--device-index", type=int, default=0)
+    p.add_argument("--epochs", type=int, default=None)
+    p.add_argument("--max-train-batches", type=int, default=None)
     p.add_argument("--python", default=sys.executable)
     p.add_argument("--skip-dicit", action="store_true")
     args = p.parse_args(argv)
@@ -46,8 +48,13 @@ def main(argv=None) -> int:
     if args.seed is not None:
         common += ["--seed", str(args.seed)]
 
+    train_extra = []
+    if args.epochs is not None:
+        train_extra += ["--epochs", str(args.epochs)]
+    if args.max_train_batches is not None:
+        train_extra += ["--max-train-batches", str(args.max_train_batches)]
     rc = run([args.python, str(runner), *common, "--output", args.output,
-              "train"], workdir)
+              "train", *train_extra], workdir)
     if rc != 0:
         return rc
 

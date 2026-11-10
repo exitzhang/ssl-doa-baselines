@@ -38,6 +38,7 @@ def _load_cfg(args) -> Dict[str, Any]:
     cfg = load_configs([args.config, args.data_config])
     if getattr(args, "seed", None) is not None:
         cfg.setdefault("run", {})["seed"] = args.seed
+        cfg.setdefault("train", {})["seed"] = args.seed
     if getattr(args, "epochs", None) is not None:
         cfg.setdefault("train", {})["epochs"] = args.epochs
     if getattr(args, "max_train_batches", None) is not None:
