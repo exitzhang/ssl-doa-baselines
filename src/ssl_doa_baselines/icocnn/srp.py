@@ -50,6 +50,9 @@ class SRPIcosahedralMap(nn.Module):
         self.normalize = bool(normalize)
         self.r = int(r)
         grid = icosahedral_grid_coordinates(r).astype(np.float64)   # (5,H,W,3)
+        # Chart coordinates lie on icosahedron faces, not on the unit sphere;
+        # steering delays need the corresponding unit direction.
+        grid = grid / np.linalg.norm(grid, axis=-1, keepdims=True)
         self.register_buffer("grid", torch.from_numpy(grid).float(), persistent=False)
 
         rn = np.asarray(mic_positions, dtype=np.float64)[:N]
@@ -60,8 +63,10 @@ class SRPIcosahedralMap(nn.Module):
         tau0 = np.empty(grid.shape[:-1] + (N, N), dtype=np.int64)
         for k in range(N):
             for l in range(N):
-                # irfft of X_k conj(X_l) peaks at lag -(p_k - p_l).u/c,
-                # i.e. the steering delay (p_l - p_k).u/c used here.
+                # The simulated/DICIT label frame is mirrored relative to the
+                # raw room coordinates: on real frames the GCC lag of
+                # X_k conj(X_l) is -(p_k - p_l).u_label/c.  Steering by
+                # (p_l - p_k).u_label therefore points the map at the label.
                 itd = np.dot(grid, rn[l] - rn[k]) / c
                 tau0[..., k, l] = np.argmin(np.abs(itd[..., None] - tau), axis=-1)
         # (N, N, 5, H, W) with tau index in [0, 2*tau_max]

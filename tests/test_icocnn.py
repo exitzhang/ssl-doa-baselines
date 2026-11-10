@@ -62,3 +62,37 @@ def test_decode_respects_max_sources():
     acc[0, 0, :, 0] = 1.0
     dets = decode_accdoa(acc, times=[[0.0]], threshold_abs=0.0, max_sources=3)
     assert len(dets[0]) == 3
+
+
+def _dataset_source(pos, az_deg, el_deg, *, fs=48000, n=4096, seed=0):
+    """Synthetic clip in the dataset label frame (see ``make_synthetic.py``)."""
+    rng = np.random.default_rng(seed)
+    src = rng.standard_normal(n)
+    freqs = np.fft.rfftfreq(n, 1.0 / fs)
+    spectrum = np.fft.rfft(src)
+    az, el = np.deg2rad(az_deg), np.deg2rad(el_deg)
+    u = np.array([np.sin(el) * np.cos(az), np.sin(el) * np.sin(az), np.cos(el)])
+    out = []
+    for p in pos:
+        delay = float(np.dot(p, u)) / 343.0
+        out.append(np.fft.irfft(spectrum * np.exp(2j * np.pi * freqs * delay), n=n))
+    return torch.from_numpy(np.stack(out, axis=-1)).float()[None]
+
+
+def test_srp_steering_uses_unit_grid_in_label_frame():
+    """A horizontal source must light up the matching azimuth, not its mirror."""
+    from ssl_doa_baselines.icocnn.srp import IcosahedralSRP
+    from ssl_doa_baselines.icocnn.grid import icosahedral_grid_coordinates
+
+    pos = np.array([[0.04, 0.0, 1.2], [0.0, 0.0, 1.2], [-0.04, 0.0, 1.2]])
+    grid = icosahedral_grid_coordinates(3).reshape(-1, 3)
+    grid = grid / np.linalg.norm(grid, axis=-1, keepdims=True)
+    horizontal = np.abs(np.degrees(np.arcsin(np.clip(grid[:, 2], -1.0, 1.0)))) < 15.0
+
+    wav = _dataset_source(pos, az_deg=60.0, el_deg=90.0)
+    srp = IcosahedralSRP(3, 48000, pos, r=3, win=4096, hop=2048)
+    with torch.no_grad():
+        maps, _ = srp(wav)
+    scores = maps[0, 0].numpy().reshape(-1)
+    peak = grid[np.flatnonzero(horizontal)[np.argmax(scores[horizontal])]]
+    assert peak[0] == pytest.approx(np.cos(np.deg2rad(60.0)), abs=0.15)

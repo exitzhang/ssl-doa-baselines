@@ -51,6 +51,10 @@ def main(argv=None) -> int:
     u = np.array([np.sin(el) * np.cos(az), np.sin(el) * np.sin(az), np.cos(el)])
     channels = []
     for pos in mic:
+        # Match the dataset label frame: the simulated / DICIT labels are
+        # mirrored relative to the raw room coordinates, so the SRP front end
+        # steers with (p_l - p_k).u.  Generating with e^{+j w d} makes the
+        # front end peak at the requested azimuth.
         delay = float(np.dot(pos, u)) / 343.0
         channels.append(np.fft.irfft(spectrum * np.exp(2j * np.pi * freqs * delay), n=n))
     audio = np.stack(channels, axis=-1)
