@@ -9,10 +9,18 @@ simulated validation set; DICIT curves are reported separately.
 The upstream 200-epoch recipes remain in the configs; the actual values are
 recorded in each `config.json`.  Jobs: `queue/external_baselines_2026-11-10.json`.
 
-**LOCATA pin.**  Every run imports LOCATA from the `dev` worktree
-`/home/t-zhangchaoqin/projects/ssl/wt/locata-dev` (`54ffaa6`, clean).  The
-shared checkout `/projects/ssl/LOCATA` stays on the V5 ablation branch, which
-the running ablation jobs use for their own sweep step.
+**LOCATA pin.**  Every run imports LOCATA from the worktree
+`/home/t-zhangchaoqin/projects/ssl/wt/locata-dev`, detached at `d5e7c5d`
+(clean).  The shared checkout `/projects/ssl/LOCATA` stays on the V5 ablation
+branch, which the running ablation jobs use for their own sweep step.
+
+The pin was applied on 2026-11-11 after `dev` moved under the running jobs
+(`73e95b3` at 10:48, `d5e7c5d` at 10:58): `tf_mamba_spectrum_s42_v2` imported
+`73e95b3`, `icocnn_multi_s42_v2` imported `d5e7c5d`, and SRP-DNN ran on
+`54ffaa6`.  The delta between them is additive coarse-to-fine support that is
+inert when `coarse_supervision` / `coarse_heatmap_creator` are `None`, so the
+three rows remain comparable; from now on every process (including the eval
+step) imports the pinned commit.
 
 ## DICIT test — locked validation working point
 

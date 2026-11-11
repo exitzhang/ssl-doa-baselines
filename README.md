@@ -123,10 +123,13 @@ silence-frame false peaks, matching LOCATA's evaluator.
 ## Queue submission
 
 Training must run through `gpu_queue` (foreground command, train + eval share
-one slot).  `--locata-root` is pinned to a dedicated worktree of the LOCATA
-`dev` branch (`/home/t-zhangchaoqin/projects/ssl/wt/locata-dev`, `54ffaa6`), so
-the shared checkout used by running V5 ablations can change branches without
-moving the baselines' code version.  Each run records the actual LOCATA
+one slot).  `--locata-root` points at a dedicated worktree of the LOCATA repository
+(`/home/t-zhangchaoqin/projects/ssl/wt/locata-dev`), **detached at a fixed
+commit** (`d5e7c5d`, the `dev` tip on 2026-11-11 10:58).  It was created from
+`dev` so the shared checkout used by the V5 ablations stays untouched, and it is
+detached so that merge activity on `dev` cannot change the code a queued run
+imports.  To move the baselines to a newer LOCATA revision, check out that
+commit explicitly and resubmit.  Each run records the actual LOCATA
 commit/branch/dirty flag under `config.json -> locata`.
 
 Example job manifest:
