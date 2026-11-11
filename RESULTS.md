@@ -46,11 +46,10 @@ not bracketed: the lowest FAR on the DICIT curve is 4.15%.  Forward time is
 per 16,000-sample clip on one RTX 4090, including the STFT front end and IDL.
 
 **SRP-DNN budget alignment.**  The numbers above are the 15-epoch `_dev` run.
-`srp_dnn_idl_s42_v4b` (100 epochs, `patience 6`, same seed 42 and recipe) was
-submitted to `gpu_queue` on 2026-11-11 and will replace this row when it
-finishes.  The 15-epoch artifacts are archived under
-`runs/_aborted_budget15_20261111/srp_dnn_dev`; `runs/srp_dnn_idl_s42` is reused
-for the new run.
+`srp_dnn_idl_s42_v4c` (100 epochs, `patience 6`, same seed 42 and recipe) is
+queued on `gpu_queue` and will replace this row when it finishes.  The 15-epoch
+artifacts are archived under `runs/_aborted_budget15_20261111/srp_dnn_dev`;
+`runs/srp_dnn_idl_s42` is reused for the new run.
 
 DICIT frame counts (for reference): 926 frames total, 176 / 379 / 371 for
 1 / 2 / 3 sources; the actual counts are written in each `eval_dicit.json`.
@@ -69,7 +68,8 @@ DICIT frame counts (for reference): 926 frames total, 176 / 379 / 371 for
 |---|---|
 | `srp_dnn_idl_s42_dev` | done 2026-11-10 22:21, 15 epochs, Adam, lr 1e-3; results archived, superseded by `_v4b` |
 | `srp_dnn_idl_s42_v4` | canceled 2026-11-11 16:40 — started on GPU0; moved to GPU1 after GPU0 was reduced to one slot |
-| `srp_dnn_idl_s42_v4b` | submitted 2026-11-11 — 100 epochs / patience 6, seed 42, same Adam lr 1e-3 recipe, pinned to GPU1; output `runs/srp_dnn_idl_s42` |
+| `srp_dnn_idl_s42_v4b` | canceled 2026-11-11 17:20 — shared NFS dataset latency rose ~12x once three jobs loaded it concurrently (SRP epoch 4 > 21 min vs 3.7–5.8 min); taken off the GPU and requeued as `_v4c` |
+| `srp_dnn_idl_s42_v4c` | queued 2026-11-11 17:22 — same 100 epochs / patience 6 / seed 42 recipe, pinned to GPU1 (now one slot); output `runs/srp_dnn_idl_s42` |
 | `tf_mamba_spectrum_s42_dev` | failed 2026-11-11 07:15 — fp16 autocast overflows (forward NaN from step ~132 on real batches); no checkpoint survived. fp32 at batch 8 is stable (400 steps, 12.8 GiB) |
 | `icocnn_multi_s42_dev` | ran on the pre-fix code: epoch 1 took 39,032 s (the vendored icoCNN layers rebuilt their index tensors on the host every forward). Fixed in `4efc135` (25x faster step, bitwise-identical output); superseded by `_v2` |
 | `tf_mamba_spectrum_s42_v2` | canceled 2026-11-11 11:18 after 20 min — trained with `label_sigma = 1.5`, the coarse-to-fine control width, not the mainline B0/Parallel width (3.0) |

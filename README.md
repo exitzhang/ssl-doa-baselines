@@ -208,4 +208,7 @@ resubmitted in fp32 as `queue/external_baselines_2026-11-11_v2.json`
 
 On 2026-11-11 the budget was raised to 100 epochs / `patience 6` for all three
 rows; SRP-DNN's 15-epoch run is archived and re-queued as
-`srp_dnn_idl_s42_v4b` (`queue/external_baselines_2026-11-11_srp100.json`, GPU1).
+`srp_dnn_idl_s42_v4c` (`queue/external_baselines_2026-11-11_srp100.json`, GPU1,
+one slot).  The `_v4b` attempt was canceled because three concurrent jobs
+saturated the shared NFS dataset; the recipe is unchanged and the queued job
+starts from scratch.
