@@ -4,10 +4,18 @@ Protocol: 48 kHz, 16,000-sample clips, mics `5,6,8`, azimuth 0°–180°,
 10° one-to-one matching, azimuth-only MAE.  Operating points are locked on the
 simulated validation set; DICIT curves are reported separately.
 
+**Label width.**  TF-Mamba's spectrum label uses `label_sigma = 3.0` bins
+(1° per bin at Q=181), matching the mainline V5 baseline B0 and the Parallel
+arms, which train with `--label_sigma 3`.  The σ=1.5 runs (A0/A1/A2) are the
+coarse-to-fine controls, not the baseline.  IcoCNN (ACCDOA unit vectors) and
+SRP-DNN (DP-IPD template regression + IDL) have no Gaussian label.
+
 **Shared training budget.**  All three rows are trained with 15 epochs
 (1.41 M samples, `--epochs 15`, seed 42) so the comparison is budget-matched.
 The upstream 200-epoch recipes remain in the configs; the actual values are
-recorded in each `config.json`.  Jobs: `queue/external_baselines_2026-11-10.json`.
+recorded in each `config.json`.  Jobs:
+`queue/external_baselines_2026-11-11_v3.json` (TF-Mamba) and
+`queue/external_baselines_2026-11-11_v2.json` (IcoCNN).
 
 **LOCATA pin.**  Every run imports LOCATA from the worktree
 `/home/t-zhangchaoqin/projects/ssl/wt/locata-dev`, detached at `d5e7c5d`
@@ -26,7 +34,7 @@ step) imports the pinned commit.
 
 | Method | Run | F1@10° | 1-src F1 | 2-src F1 | 3-src F1 | FAR | R@FAR 3% | MAE (°) | Params | Forward ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| TF-Mamba | `tf_mamba_spectrum_s42_v2` | — | — | — | — | — | — | — | 1.41 M | — |
+| TF-Mamba | `tf_mamba_spectrum_s42_v3` | — | — | — | — | — | — | — | 1.41 M | — |
 | IcoCNN (multi-source) | `icocnn_multi_s42_v2` | — | — | — | — | — | — | — | 6.41 M | — |
 | SRP-DNN | `srp_dnn_idl_s42_dev` | 0.7607 | 0.8727 | 0.7782 | 0.7251 | 0.1221 | not covered | 3.27 | 0.86 M | 1.66 |
 
@@ -53,6 +61,7 @@ DICIT frame counts (for reference): 926 frames total, 176 / 379 / 371 for
 | `srp_dnn_idl_s42_dev` | done 2026-11-10 22:21, 15 epochs, Adam, lr 1e-3 |
 | `tf_mamba_spectrum_s42_dev` | failed 2026-11-11 07:15 — fp16 autocast overflows (forward NaN from step ~132 on real batches); no checkpoint survived. fp32 at batch 8 is stable (400 steps, 12.8 GiB) |
 | `icocnn_multi_s42_dev` | ran on the pre-fix code: epoch 1 took 39,032 s (the vendored icoCNN layers rebuilt their index tensors on the host every forward). Fixed in `4efc135` (25x faster step, bitwise-identical output); superseded by `_v2` |
-| `tf_mamba_spectrum_s42_v2` | running since 2026-11-11 10:57 — fp32, batch 8, ~0.25 s/step (~50 min/epoch, ~12 h for 15 epochs) |
+| `tf_mamba_spectrum_s42_v2` | canceled 2026-11-11 11:18 after 20 min — trained with `label_sigma = 1.5`, the coarse-to-fine control width, not the mainline B0/Parallel width (3.0) |
+| `tf_mamba_spectrum_s42_v3` | running since 2026-11-11 11:20 — fp32, batch 8, `label_sigma = 3.0`; ~0.21 s/step, ~45 min/epoch, ~11 h for 15 epochs |
 | `icocnn_multi_s42_v2` | running since 2026-11-11 11:00 — fp32, batch 8, ~0.18 s/step (~35 min/epoch) |
 | `srp_dnn_dicit_reeval_v2` | done 2026-11-11 11:02 — refreshed `runs/srp_dnn_idl_s42/eval_dicit.json` with the evaluated split's metrics (the first evaluation stored the validation working point in `metrics`) |

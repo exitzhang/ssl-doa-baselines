@@ -37,7 +37,10 @@ seed = 42
 
 [data]
 out_bins = 181
-label_sigma = 1.5
+# Match the mainline V5 baseline B0 and the Parallel arms, which train with
+# --label_sigma 3 (Record/reports/v5_par_local_summary_2026-11-09.md).  The
+# sigma=1.5 recipes (A0/A1/A2) are coarse-to-fine controls, not the baseline.
+label_sigma = 3.0
 max_sources = 3
 target_num_samples = 16000
 mic_indices = [5, 6, 8]
