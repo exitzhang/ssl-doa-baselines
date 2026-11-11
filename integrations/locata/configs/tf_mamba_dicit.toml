@@ -21,7 +21,9 @@ activation = "sigmoid"
 
 [train]
 epochs = 200
-batch_size = 16
+# fp16 autocast made the forward pass go NaN on real batches (step ~132, 12.8 GiB
+# peak at bs8 in fp32); batch 16 in fp32 exceeds 24 GiB.
+batch_size = 8
 num_workers = 16
 lr = 1.0e-4
 optimizer = "adamw"
@@ -30,7 +32,7 @@ scheduler = "cosine"
 eta_min = 1.0e-6
 eval_every = 5
 patience = 6
-amp = true
+amp = false
 seed = 42
 
 [data]

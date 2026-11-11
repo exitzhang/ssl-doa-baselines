@@ -1,4 +1,4 @@
-# Main table (pending formal runs)
+# Main table (SRP-DNN complete; TF-Mamba and IcoCNN pending)
 
 Protocol: 48 kHz, 16,000-sample clips, mics `5,6,8`, azimuth 0°–180°,
 10° one-to-one matching, azimuth-only MAE.  Operating points are locked on the
@@ -20,7 +20,12 @@ the running ablation jobs use for their own sweep step.
 |---|---|---|---|---|---|---|---|---|---|---|
 | TF-Mamba | `tf_mamba_spectrum_s42_dev` | — | — | — | — | — | — | — | 1.41 M | — |
 | IcoCNN (multi-source) | `icocnn_multi_s42_dev` | — | — | — | — | — | — | — | 6.41 M | — |
-| SRP-DNN | `srp_dnn_idl_s42_dev` | — | — | — | — | — | — | — | 0.86 M | — |
+| SRP-DNN | `srp_dnn_idl_s42_dev` | 0.7607 | 0.8727 | 0.7797 | 0.7240 | 0.1221 | 未覆盖 | 3.28 | 0.86 M | 2.17 |
+
+SRP-DNN (threshold 0.45 locked on 9,462 simulated validation frames):
+precision 0.849, recall 0.689, frames 926 (176 / 379 / 371).  `R@FAR 3%` is
+not bracketed: the lowest FAR on the DICIT curve is 4.15%.  Forward time is
+per 16,000-sample clip on one RTX 4090, including the STFT front end and IDL.
 
 DICIT frame counts (for reference): 926 frames total, 176 / 379 / 371 for
 1 / 2 / 3 sources; the actual counts are written in each `eval_dicit.json`.
@@ -31,4 +36,12 @@ DICIT frame counts (for reference): 926 frames total, 176 / 379 / 371 for
 |---|---|---|---|
 | TF-Mamba | — | — | — |
 | IcoCNN | — | — | — |
-| SRP-DNN | — | — | — |
+| SRP-DNN | 0.45 | 0.6959 | 0.1531 |
+
+## Run log
+
+| Job | Outcome |
+|---|---|
+| `srp_dnn_idl_s42_dev` | done 2026-11-10 22:21, 15 epochs, Adam, lr 1e-3 |
+| `tf_mamba_spectrum_s42_dev` | failed 2026-11-11 07:15 — fp16 autocast overflows (forward NaN from step ~132 on real batches); no checkpoint survived. fp32 at batch 8 is stable (400 steps, 12.8 GiB) |
+| `icocnn_multi_s42_dev` | epoch 1 took 39,032 s — the vendored icoCNN layers rebuilt their index tensors on the host every forward. Fixed in `4efc135` (25x faster step, bitwise-identical output); needs a resubmission |
