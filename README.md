@@ -194,6 +194,8 @@ DP-IPD, label conversion, SRP steering and the import boundary.
 On 2026-11-10 the three formal jobs (`tf_mamba_spectrum_s42_dev`,
 `icocnn_multi_s42_dev`, `srp_dnn_idl_s42_dev`) were submitted to `gpu_queue`
 with the shared 15-epoch budget and `--locata-root` pinned to the `dev`
-worktree.  The queue was fully occupied by the ongoing V5 ablations, so they
-ran after those slots freed.  Results are filled into `RESULTS.md` as each job
-finishes.
+worktree.  SRP-DNN finished; TF-Mamba hit an fp16 overflow and IcoCNN ran on a
+pathologically slow version of the vendored layers, so on 2026-11-11 both were
+resubmitted in fp32 as `queue/external_baselines_2026-11-11_v2.json`
+(`tf_mamba_spectrum_s42_v2`, `icocnn_multi_s42_v2`).  Results are filled into
+`RESULTS.md` as each job finishes.

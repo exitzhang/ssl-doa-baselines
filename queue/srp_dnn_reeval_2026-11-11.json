@@ -1,7 +1,7 @@
 {
   "jobs": [
     {
-      "id": "srp_dnn_dicit_reeval",
+      "id": "srp_dnn_dicit_reeval_v2",
       "cwd": "/home/t-zhangchaoqin/projects/ssl/ssl-doa-baselines",
       "argv": [
         "/home/t-zhangchaoqin/.conda/envs/locata/bin/python",
@@ -10,7 +10,7 @@
         "--config", "integrations/locata/configs/srp_dnn_dicit.toml",
         "--data-config", "integrations/locata/configs/data_local.toml",
         "--device-index", "0",
-        "--output", "runs/srp_dnn_idl_s42",
+        "--output", "runs/srp_dnn_idl_s42/eval_dicit.json",
         "eval",
         "--checkpoint", "runs/srp_dnn_idl_s42/checkpoint.pth",
         "--split", "dicit",

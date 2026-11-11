@@ -399,6 +399,10 @@ def cmd_eval(args) -> int:
         locata_root=str(locata_root),
     )
     out = Path(args.output) if args.output else Path(args.checkpoint).parent / f"eval_{split}.json"
+    if out.is_dir():
+        # `train` takes the run directory under --output; accept the same value
+        # for `eval` instead of failing on an IsADirectoryError.
+        out = out / f"eval_{split}.json"
     adapter.write_json(out, payload)
     m = payload["metrics"][acc[len(acc) // 2]]
     print(f"[eval] {model.model_name} {split} @ threshold {payload['locked_threshold']}: "
