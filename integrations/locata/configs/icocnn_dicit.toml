@@ -16,7 +16,8 @@ n_slots = 10
 smooth_vertices = true
 
 [train]
-epochs = 200
+# Formal comparison budget: 100 epochs, patience 6 eval rounds (early stop).
+epochs = 100
 batch_size = 8
 num_workers = 8
 lr = 1.0e-3
@@ -26,7 +27,7 @@ scheduler = "cosine"
 eta_min = 1.0e-6
 grad_clip = 1.0
 eval_every = 2
-patience = 8
+patience = 6
 # fp32 is ~2.8x faster than AMP here (0.18 s vs 0.51 s/step at bs8) and avoids
 # the fp16 overflow class of failures; keep autocast off.
 amp = false

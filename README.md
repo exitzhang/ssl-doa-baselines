@@ -165,11 +165,13 @@ Submit `icocnn_multi_s42` and `srp_dnn_idl_s42` the same way with their configs.
 
 ### Shared training budget
 
-The configs keep the upstream 200-epoch recipes.  The first formal pass uses
-`--epochs 15` for all three methods (15 × 94,067 = 1.41M samples, seed 42), so
-the three lines see the same sample budget and fit the current queue.  The
-actual epoch count and budget are recorded in each `config.json`.  The
-submitted manifest is `queue/external_baselines_2026-11-10.json`.
+All three methods run `--epochs 100` with `patience 6` eval rounds of early
+stopping and seed 42, so they see the same sample budget.  A 15-epoch first
+pass was dropped: the V5 mainline (B0 / Parallel) picks its best epoch around
+30 and early-stops at 60, so 15 epochs sat at roughly a quarter of the
+comparison budget.  The effective epoch count and budget are recorded in each
+`config.json`.  The submitted manifest is
+`queue/external_baselines_2026-11-11_v4.json`.
 
 ## Layout
 

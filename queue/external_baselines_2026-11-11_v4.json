@@ -1,0 +1,38 @@
+{
+  "jobs": [
+    {
+      "id": "tf_mamba_spectrum_s42_v4",
+      "cwd": "/home/t-zhangchaoqin/projects/ssl/ssl-doa-baselines",
+      "argv": [
+        "/home/t-zhangchaoqin/.conda/envs/locata/bin/python",
+        "integrations/locata/train_then_eval.py",
+        "--locata-root", "/home/t-zhangchaoqin/projects/ssl/wt/locata-dev",
+        "--config", "integrations/locata/configs/tf_mamba_dicit.toml",
+        "--data-config", "integrations/locata/configs/data_local.toml",
+        "--output", "runs/tf_mamba_spectrum_s42",
+        "--seed", "42",
+        "--device-index", "0",
+        "--epochs", "100"
+      ],
+      "gpu": "0",
+      "timeout_seconds": 345600
+    },
+    {
+      "id": "icocnn_multi_s42_v4",
+      "cwd": "/home/t-zhangchaoqin/projects/ssl/ssl-doa-baselines",
+      "argv": [
+        "/home/t-zhangchaoqin/.conda/envs/locata/bin/python",
+        "integrations/locata/train_then_eval.py",
+        "--locata-root", "/home/t-zhangchaoqin/projects/ssl/wt/locata-dev",
+        "--config", "integrations/locata/configs/icocnn_dicit.toml",
+        "--data-config", "integrations/locata/configs/data_local.toml",
+        "--output", "runs/icocnn_multi_s42",
+        "--seed", "42",
+        "--device-index", "0",
+        "--epochs", "100"
+      ],
+      "gpu": "1",
+      "timeout_seconds": 259200
+    }
+  ]
+}

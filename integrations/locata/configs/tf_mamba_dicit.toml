@@ -20,7 +20,8 @@ output_dim = 181
 activation = "sigmoid"
 
 [train]
-epochs = 200
+# Formal comparison budget: 100 epochs, patience 6 eval rounds (early stop).
+epochs = 100
 # fp16 autocast made the forward pass go NaN on real batches (step ~132, 12.8 GiB
 # peak at bs8 in fp32); batch 16 in fp32 exceeds 24 GiB.
 batch_size = 8
