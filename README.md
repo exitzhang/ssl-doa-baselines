@@ -170,8 +170,9 @@ stopping and seed 42, so they see the same sample budget.  A 15-epoch first
 pass was dropped: the V5 mainline (B0 / Parallel) picks its best epoch around
 30 and early-stops at 60, so 15 epochs sat at roughly a quarter of the
 comparison budget.  The effective epoch count and budget are recorded in each
-`config.json`.  The submitted manifest is
-`queue/external_baselines_2026-11-11_v4.json`.
+`config.json`.  The submitted manifests are
+`queue/external_baselines_2026-11-11_v4.json` (TF-Mamba, IcoCNN) and
+`queue/external_baselines_2026-11-11_srp100.json` (SRP-DNN).
 
 ## Layout
 
@@ -204,3 +205,7 @@ pathologically slow version of the vendored layers, so on 2026-11-11 both were
 resubmitted in fp32 as `queue/external_baselines_2026-11-11_v2.json`
 (`tf_mamba_spectrum_s42_v2`, `icocnn_multi_s42_v2`).  Results are filled into
 `RESULTS.md` as each job finishes.
+
+On 2026-11-11 the budget was raised to 100 epochs / `patience 6` for all three
+rows; SRP-DNN's 15-epoch run is archived and re-queued as
+`srp_dnn_idl_s42_v4b` (`queue/external_baselines_2026-11-11_srp100.json`, GPU1).

@@ -19,7 +19,9 @@ n_az = 181
 n_el = 7
 
 [train]
-epochs = 200
+# Shared comparison budget: 100 epochs, patience 6 eval rounds (early stop),
+# matching the TF-Mamba / IcoCNN v4 runs and the V5 mainline budget.
+epochs = 100
 batch_size = 8
 num_workers = 8
 lr = 1.0e-3
@@ -29,7 +31,7 @@ scheduler = "cosine"
 eta_min = 1.0e-6
 grad_clip = 1.0
 eval_every = 2
-patience = 8
+patience = 6
 amp = true
 seed = 42
 
