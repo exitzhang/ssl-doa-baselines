@@ -328,6 +328,13 @@ def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
     """Assemble ``eval_<split>.json``; kept separate so it can be tested."""
     far_target = float(decode_cfg.get("far_target", 0.03))
     frames = max(int(result["frames"]), 1)
+    key = str(locked["key"])
+    # ``locked`` holds the *validation* working point that chose the threshold;
+    # the metrics reported for this split must come from this split's own curve
+    # at that same threshold.
+    metrics_at_key = result["metrics_by_key"].get(key)
+    if metrics_at_key is None:
+        raise KeyError(f"locked threshold {key!r} not in the {split} curve")
     return {
         "model": model.model_name,
         "checkpoint": str(Path(checkpoint).resolve()),
@@ -335,7 +342,8 @@ def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
         "frames": result["frames"],
         "source_count_dist": result["source_count_dist"],
         "working_point": locked,
-        "metrics": locked,
+        "locked_threshold": float(key),
+        "metrics": metrics_at_key,
         "by_source_count": adapter.score_by_source_count(
             result["gts"], pred_all, acc_thresholds=acc),
         "curve": result["metrics_by_key"],
@@ -392,8 +400,9 @@ def cmd_eval(args) -> int:
     )
     out = Path(args.output) if args.output else Path(args.checkpoint).parent / f"eval_{split}.json"
     adapter.write_json(out, payload)
-    m = locked
-    print(f"[eval] {model.model_name} {split}: F1@10={m['F1']:.4f} "
+    m = payload["metrics"][acc[len(acc) // 2]]
+    print(f"[eval] {model.model_name} {split} @ threshold {payload['locked_threshold']}: "
+          f"F1@{acc[len(acc) // 2]}={m['F1']:.4f} "
           f"P={m['P']:.4f} R={m['R']:.4f} FAR={m['FAR']:.4f} MAE={m['MAE']:.2f} "
           f"-> {out}")
     return 0

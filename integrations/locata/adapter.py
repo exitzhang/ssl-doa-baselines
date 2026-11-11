@@ -260,6 +260,16 @@ def train_tf_mamba(model, data_cfg, train_cfg, *, device_index: int,
     trainer.close()
 
     best = Path(out_dir) / "best.pth"
+    if not best.is_file():
+        # Trainer only writes best.pth when a validation loss improves.  A run
+        # whose validation stayed non-finite (fp16 overflow) must still export
+        # something rather than dying on a missing file.
+        last = Path(out_dir) / "last.pth"
+        if not last.is_file():
+            raise FileNotFoundError(f"neither best.pth nor last.pth in {out_dir}")
+        print(f"[train_tf_mamba] no best.pth (validation never improved); "
+              f"exporting {last} instead")
+        best = last
     ckpt = torch.load(best, map_location="cpu", weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
     export = Path(out_dir) / "checkpoint.pth"

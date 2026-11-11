@@ -57,16 +57,20 @@ class SmoothVertices(torch.nn.Module):
 		super().__init__()
 		self.r = r
 		self.clear_vertices = CleanVertices(r)
-		self.v1_neighbors = torch.LongTensor([[[chart, 1, 0],
+		# Registered as buffers (non-persistent) so the index tensors follow the
+		# module to the GPU once instead of being re-copied on every forward.
+		self.register_buffer('v1_neighbors', torch.LongTensor([[[chart, 1, 0],
 											   [chart, 1, 1],
 											   [chart, 0, 1],
 											   [chart-1, -1, 2**r],
-											   [chart-1, -1, 2**r-1]] for chart in range(5)])
-		self.v2_neighbors = torch.LongTensor([[[chart, 1, 2**r],
+											   [chart-1, -1, 2**r-1]] for chart in range(5)]),
+											   persistent=False)
+		self.register_buffer('v2_neighbors', torch.LongTensor([[[chart, 1, 2**r],
 											   [chart, 1, 2**r + 1],
 											   [chart, 0, 2**r + 1],
 											   [chart-1, -1, -1],
-											   [chart, 0, 2**r-1]] for chart in range(5)])
+											   [chart, 0, 2**r-1]] for chart in range(5)]),
+											   persistent=False)
 
 	def forward(self, x):
 		x = self.clear_vertices(x)
@@ -128,7 +132,8 @@ class PadIco(torch.nn.Module):
 		idx_out[..., -1, 2 ** r + 1:-1] = idx_in.roll(-1, -3)[..., 0, 0:2 ** r]
 		idx_out[..., 1:-1, 0] = idx_in.roll(1, -3).roll(1, -4)[..., -1, 0:2 ** r].flip(-1)
 		idx_out[..., 2:, -1] = idx_in.roll(-1, -3).roll(1, -4)[..., 0, 2 ** r:].flip(-1)
-		self.reorder_idx = idx_out
+		# Buffer, not a plain attribute: keeps the index on the module's device.
+		self.register_buffer('reorder_idx', idx_out, persistent=False)
 
 	def forward(self, x):
 		x = self.process_vertices(x)
@@ -190,9 +195,12 @@ class ConvIco(torch.nn.Module):
 		else:
 			self.register_parameter('bias', None)
 
-		self.kernel_expansion_idx = torch.zeros((Cout, Rout, Cin, Rin, 9, 4), dtype=int)
-		self.kernel_expansion_idx[..., 0] = torch.arange(Cout).reshape((Cout, 1, 1, 1, 1))
-		self.kernel_expansion_idx[..., 1] = torch.arange(Cin).reshape((1, 1, Cin, 1, 1))
+		# Built on the CPU then registered as a buffer: a plain attribute would
+		# be re-transferred from host memory on every forward, which dominated
+		# the layer cost at width 128.
+		kernel_expansion_idx = torch.zeros((Cout, Rout, Cin, Rin, 9, 4), dtype=int)
+		kernel_expansion_idx[..., 0] = torch.arange(Cout).reshape((Cout, 1, 1, 1, 1))
+		kernel_expansion_idx[..., 1] = torch.arange(Cin).reshape((1, 1, Cin, 1, 1))
 		idx_r = torch.arange(0, Rin)
 		idx_k = torch.Tensor(((5, 4, -1, 6, 0, 3, -1, 1, 2),
 							  (4, 3, -1, 5, 0, 2, -1, 6, 1),
@@ -201,9 +209,11 @@ class ConvIco(torch.nn.Module):
 							  (1, 6, -1, 2, 0, 5, -1, 3, 4),
 							  (6, 5, -1, 1, 0, 4, -1, 2, 3)))
 		for i in range(Rout):
-			self.kernel_expansion_idx[:, i, :, :, :, 2] = idx_r.reshape((1, 1, Rin, 1))
-			self.kernel_expansion_idx[:, i, :, :, :, 3] = idx_k[i,:]
+			kernel_expansion_idx[:, i, :, :, :, 2] = idx_r.reshape((1, 1, Rin, 1))
+			kernel_expansion_idx[:, i, :, :, :, 3] = idx_k[i,:]
 			idx_r = idx_r.roll(1)
+		self.register_buffer('kernel_expansion_idx', kernel_expansion_idx,
+							 persistent=False)
 
 	def extra_repr(self):
 		return "r={}, Cin={}, Cout={}, Rin={}, Rout={}, bias={}"\
@@ -272,16 +282,17 @@ class PoolIco(torch.nn.Module):
 		self.padding = PadIco(r, R, smooth_vertices=smooth_vertices)
 		self.process_vertices = SmoothVertices(r-1) if smooth_vertices else CleanVertices(r-1)
 
-		self.neighbors = torch.zeros((2**(r-1), 2**r, 7, 2), dtype=torch.long)
-		for h in range(self.neighbors.shape[0]):
-			for w in range(self.neighbors.shape[1]):
-				self.neighbors[h,w,...] = torch.Tensor([[1+2*h,   1+2*w  ],
+		neighbors = torch.zeros((2**(r-1), 2**r, 7, 2), dtype=torch.long)
+		for h in range(neighbors.shape[0]):
+			for w in range(neighbors.shape[1]):
+				neighbors[h,w,...] = torch.Tensor([[1+2*h,   1+2*w  ],
 														[1+2*h+1, 1+2*w  ],
 														[1+2*h+1, 1+2*w+1],
 														[1+2*h,   1+2*w+1],
 														[1+2*h-1, 1+2*w  ],
 														[1+2*h-1, 1+2*w-1],
 														[1+2*h,   1+2*w-1]])
+		self.register_buffer('neighbors', neighbors, persistent=False)
 
 	def forward(self, x):
 		x = self.padding(x)
