@@ -1,4 +1,4 @@
-# Main table (SRP-DNN rerun pending; TF-Mamba running; IcoCNN running)
+# Main table (SRP-DNN rerun pending; TF-Mamba running; IcoCNN paused — too slow to share a GPU)
 
 Protocol: 48 kHz, 16,000-sample clips, mics `5,6,8`, azimuth 0°–180°,
 10° one-to-one matching, azimuth-only MAE.  Operating points are locked on the
@@ -46,7 +46,7 @@ imports the pinned commit.
 | Method | Run | F1@10° | 1-src F1 | 2-src F1 | 3-src F1 | FAR | R@FAR 3% | MAE (°) | Params | Forward ms |
 |---|---|---|---|---|---|---|---|---|---|---|
 | TF-Mamba | `tf_mamba_s42` (running; artifact `runs/tf_mamba_spectrum_s42`) | — | — | — | — | — | — | — | 1.41 M | — |
-| IcoCNN (multi-source) | `icocnn_multi_s42` (running; artifact `runs/icocnn_multi_s42_v5`) | — | — | — | — | — | — | — | 6.17 M | — |
+| IcoCNN (multi-source) | `icocnn_multi_s42` (paused — rerun when a GPU is idle) | — | — | — | — | — | — | — | 6.17 M | — |
 | SRP-DNN | `srp_dnn_s42` (rerun pending) | — | — | — | — | — | — | — | 0.86 M | — |
 
 The previous SRP-DNN attempt is **aborted**: the forward applied only four
@@ -83,17 +83,21 @@ With both fixes, an 80-step fixed-batch screen drops the loss from 0.0332 to
 0.0023 and output norms grow to ~0.83; at 1e-4 with the pedestal still in,
 training oscillates around the zero solution. The mixed 1/2/3-source
 acceptance run passed (200 steps: loss 0.067 → 0.0069, best-match error
-70° → 7.4°, distinct predictions per clip), and `icocnn_multi_s42` is running on
-`gpu_queue`. The aborted artifacts under
-`aborted/icocnn_head_20261112/` are kept only as evidence of the
-failure.
+70° → 7.4°, distinct predictions per clip). The full run trains, but it needs
+~37 min/epoch while sharing GPU1 (2/2 slots) against ~24 min solo, so it is
+paused after epoch 1 and will rerun when a GPU is idle. Epoch 1 reached
+train 0.0224 / val 0.0212, below the 1/30 zero solution — no collapse. The
+aborted artifacts under `aborted/icocnn_head_20261112/` are kept only as
+evidence of the failure; the paused attempt is archived under
+`aborted/icocnn_slow_20261112/`.
 
 **Early stopping (all three rows).** `patience=6` counts validation rounds
 (`eval_every` epochs apart), matching LOCATA's `Trainer`; the package loop had
 been counting every epoch and using the training loss as the monitor on
 non-eval epochs, so IcoCNN could stop after ~3 validation rounds. Fixed on
-2026-11-12 (covered by `tests/test_training.py`); `icocnn_multi_s42` is the first
-run with the corrected semantics.
+2026-11-12 (covered by `tests/test_training.py`); the paused IcoCNN attempt is
+the first run with the corrected semantics (it was stopped for speed before
+early stopping could trigger).
 
 DICIT frame counts (for reference): 926 frames total, 176 / 379 / 371 for
 1 / 2 / 3 sources; the actual counts are written in each `eval_dicit.json`.
@@ -115,6 +119,7 @@ These entries are recorded for the backlog but are **not** submitted to
 |---|---|---|---|
 | `tf_mamba_512_s42` | planned; smoke passed 2026-11-12; not queued | `n_fft=512`, `hop_length=480`, 100–8000 Hz (84 bins), 3 mics, Q=181, 100 epochs / patience 6 / seed 42 | Front-end ablation against the 1536/480 paper-equivalent run. The 512 front end is 10.7 ms / 93.75 Hz, not the paper's 32 ms / 31.25 Hz, so it is an adapted setting. Smoke: 1,408,725 params, output (2, 181), peak decode and checkpoint round-trip OK; random-input `mse_kl_loss` backward finite. |
 | `srp_dnn_s42` | ready; CRNN fix applied and tested; queue file prepared, not submitted | same `srp_dnn_dicit.toml` recipe (100 epochs / patience 6 / seed 42) | Replace the aborted 4-block run in the main table. `tests/test_srp_dnn.py` now asserts all five CRNN blocks execute and that `blocks[4]` receives gradients. |
+| `icocnn_multi_s42` | ready; **run when a GPU is idle** (too slow to share one) | reference head (last conv → `M` + Soft-ArgMax), `lr 1e-4`, cross-pair-only SRP maps, 100 epochs / patience 6 / seed 42 | Main-table IcoCNN row. ~37 min/epoch with GPU1 at 2/2 slots vs ~24 min solo; epoch 1 was healthy (train 0.0224 / val 0.0212). |
 
 The aborted SRP-DNN attempt stays in the run log as evidence of the bug; do not
 cite its metrics as the SRP-DNN row until `srp_dnn_s42` is available.
@@ -142,5 +147,5 @@ cited as results.
 | `icocnn_multi_s42_v4` | aborted — non-reference head (`LayerNorm+Linear` over 128 channels instead of last conv → `M` + Soft-ArgMax); collapsed to a constant 3-beam output | `aborted/icocnn_head_20261112/`; identical DICIT predictions on all 926 frames, loss flat at 0.0312 from epoch 2 |
 | `icocnn_multi_s42_v5` | aborted — early stopping counted epochs, not validation rounds | canceled 2026-11-12 15:49 before the first epoch so the fix could take effect |
 | `icocnn_multi_s42_v5b` | aborted — no `train.log` in the run directory | canceled 2026-11-12 16:01 after 9 min; restarted after adding the log tee |
-| `icocnn_multi_s42_v5c` | running — canonical `icocnn_multi_s42` | `runs/icocnn_multi_s42_v5`; submitted 2026-11-12 16:02, reference head, `lr 1e-4`, cross-pair-only SRP maps, 100 epochs / patience 6 validation rounds / seed 42 on GPU1; fixed-batch acceptance passed (loss 0.067 → 0.0069, best-match error 70° → 7.4°) |
+| `icocnn_multi_s42_v5c` | paused — training too slow on a shared GPU; no result | `aborted/icocnn_slow_20261112/`; canceled 2026-11-12 17:04 after epoch 1 (train 0.0224 / val 0.0212, no collapse); ~37 min/epoch with GPU1 at 2/2 slots vs ~24 min solo; rerun when a GPU is idle |
 | `srp_dnn_s42` | prepared, not submitted | queue file `queue/srp_dnn_2026-11-12.json`; output `runs/srp_dnn_s42`; fixed five-block forward |
