@@ -37,7 +37,7 @@ step) imports the pinned commit.
 | Method | Run | F1@10° | 1-src F1 | 2-src F1 | 3-src F1 | FAR | R@FAR 3% | MAE (°) | Params | Forward ms |
 |---|---|---|---|---|---|---|---|---|---|---|
 | TF-Mamba | `tf_mamba_spectrum_s42_v4` | — | — | — | — | — | — | — | 1.41 M | — |
-| IcoCNN (multi-source) | pending (`_v5b`, output `runs/icocnn_multi_s42_v5`) | — | — | — | — | — | — | — | 6.17 M | — |
+| IcoCNN (multi-source) | pending (`_v5c`, output `runs/icocnn_multi_s42_v5`) | — | — | — | — | — | — | — | 6.17 M | — |
 | SRP-DNN | `srp_dnn_idl_s42` (v4c) | 0.7611 | 0.8842 | 0.7667 | 0.7330 | 0.1475 | not covered | 3.37 | 0.86 M | 1.66 |
 
 SRP-DNN (threshold 0.40 locked on 9,462 simulated validation frames):
@@ -82,7 +82,7 @@ With both fixes, an 80-step fixed-batch screen drops the loss from 0.0332 to
 0.0023 and output norms grow to ~0.83; at 1e-4 with the pedestal still in,
 training oscillates around the zero solution. The mixed 1/2/3-source
 acceptance run passed (200 steps: loss 0.067 → 0.0069, best-match error
-70° → 7.4°, distinct predictions per clip), and `icocnn_multi_s42_v5b` is
+70° → 7.4°, distinct predictions per clip), and `icocnn_multi_s42_v5c` is
 running on `gpu_queue`. The `_v4` artifacts are kept only as evidence of the
 failure.
 
@@ -90,7 +90,7 @@ failure.
 (`eval_every` epochs apart), matching LOCATA's `Trainer`; the package loop had
 been counting every epoch and using the training loss as the monitor on
 non-eval epochs, so IcoCNN could stop after ~3 validation rounds. Fixed on
-2026-11-12 (covered by `tests/test_training.py`); `_v5b` is the first run with
+2026-11-12 (covered by `tests/test_training.py`); `_v5c` is the first run with
 the corrected semantics.
 
 DICIT frame counts (for reference): 926 frames total, 176 / 379 / 371 for
@@ -120,5 +120,6 @@ DICIT frame counts (for reference): 926 frames total, 176 / 379 / 371 for
 | `tf_mamba_spectrum_s42_v4` | submitted 2026-11-11 11:47 — fp32, batch 8, `label_sigma = 3.0`, 100 epochs / patience 6; ~44 min/epoch, ~0.22 s/step |
 | `icocnn_multi_s42_v4` | **invalid** — non-reference head (`LayerNorm+Linear` over 128 channels instead of last conv → `M` + Soft-ArgMax); collapsed to a constant 3-beam output (identical DICIT predictions on all 926 frames, loss flat at 0.0312 from epoch 2). Superseded by the reference-head code and `_v5` |
 | `icocnn_multi_s42_v5` | canceled 2026-11-12 15:49 after startup — early stopping counted epochs, not validation rounds, and monitored train loss on non-eval epochs; cancelled before the first epoch so the fix could take effect |
-| `icocnn_multi_s42_v5b` | submitted 2026-11-12 15:52 — reference head (last conv → `M` + Soft-ArgMax), `lr 1e-4`, cross-pair-only SRP maps; 100 epochs / patience 6 validation rounds / seed 42 on GPU1; fixed-batch acceptance passed (loss 0.067 → 0.0069, best-match error 70° → 7.4°) |
+| `icocnn_multi_s42_v5b` | canceled 2026-11-12 16:01 after 9 min — the native loop logged epochs only to the queue `command.log`, so the run directory had no `train.log`; restarted as `_v5c` after adding the log tee |
+| `icocnn_multi_s42_v5c` | submitted 2026-11-12 16:02 — reference head (last conv → `M` + Soft-ArgMax), `lr 1e-4`, cross-pair-only SRP maps, per-epoch `runs/icocnn_multi_s42_v5/train.log`; 100 epochs / patience 6 validation rounds / seed 42 on GPU1; fixed-batch acceptance passed (loss 0.067 → 0.0069, best-match error 70° → 7.4°) |
 | `srp_dnn_dicit_reeval_v2` | done 2026-11-11 11:02 — refreshed `runs/srp_dnn_idl_s42/eval_dicit.json` with the evaluated split's metrics (the first evaluation stored the validation working point in `metrics`) |
