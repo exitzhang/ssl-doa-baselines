@@ -335,6 +335,13 @@ def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
     metrics_at_key = result["metrics_by_key"].get(key)
     if metrics_at_key is None:
         raise KeyError(f"locked threshold {key!r} not in the {split} curve")
+    # Collapse guard: a model that outputs the same detection set on every frame
+    # (e.g. icocnn_multi_s42_v4) still produces a plausible-looking F1, so record
+    # the diversity and let ``cmd_eval`` warn about it.
+    signatures = {
+        tuple(sorted((round(a, 1), round(e, 1)) for a, e in frame))
+        for frame in pred_all
+    }
     return {
         "model": model.model_name,
         "checkpoint": str(Path(checkpoint).resolve()),
@@ -355,6 +362,10 @@ def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
         "predictions": {
             "gt": [_plain_angles(g) for g in result["gts"]],
             "pred": [_plain_angles(p) for p in pred_all],
+        },
+        "prediction_diversity": {
+            "unique_frames": len(signatures),
+            "frames": int(result["frames"]),
         },
         "forward_ms_per_frame": (
             None if result.get("forward_ms_per_frame") is None
@@ -404,6 +415,10 @@ def cmd_eval(args) -> int:
         # for `eval` instead of failing on an IsADirectoryError.
         out = out / f"eval_{split}.json"
     adapter.write_json(out, payload)
+    diversity = payload["prediction_diversity"]
+    if diversity["frames"] > 1 and diversity["unique_frames"] == 1:
+        print(f"[eval] WARNING: identical predictions on all {diversity['frames']} "
+              "frames; the model has collapsed to a constant output.", file=sys.stderr)
     m = payload["metrics"][acc[len(acc) // 2]]
     print(f"[eval] {model.model_name} {split} @ threshold {payload['locked_threshold']}: "
           f"F1@{acc[len(acc) // 2]}={m['F1']:.4f} "
