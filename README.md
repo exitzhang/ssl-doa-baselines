@@ -208,13 +208,19 @@ the comparison budget.  TF-Mamba's `_dev` run also hit an fp16 overflow, and
 IcoCNN's ran on a pathologically slow version of the vendored layers.
 
 The current canonical runs are `tf_mamba_s42` (artifact
-`runs/tf_mamba_spectrum_s42`) and `icocnn_multi_s42` (artifact
-`runs/icocnn_multi_s42_v5`), both on `gpu_queue` with 100 epochs /
-`patience 6` / seed 42.  `srp_dnn_s42` is prepared in
-`queue/srp_dnn_2026-11-12.json` (GPU1, one slot) but not submitted: the
-previous SRP-DNN run executed only four of the five CRNN blocks
-(`zip(self.blocks, self.pools)` stops after the four pools), so its artifacts
-are archived under `aborted/srp_dnn_block5_20261112/` and its metrics are
-not cited.  The forward is fixed and covered by regression tests.  Every
-attempt's status is recorded in the `RESULTS.md` run log; job ids in historical
-`queue/` files keep their original `_vN` names.
+`runs/tf_mamba_spectrum_s42`, running on GPU0) and `icocnn_multi_s42` (paused
+after epoch 1 — too slow to share a GPU; see `RESULTS.md`).  Both queued jobs
+use 100 epochs / `patience 6` / seed 42 on `gpu_queue`:
+
+- `srp_dnn_s42` (`queue/srp_dnn_2026-11-12.json`, GPU1): reruns the recipe with
+  the fixed forward.  The previous run executed only four of the five CRNN
+  blocks (`zip(self.blocks, self.pools)` stops after the four pools), so its
+  artifacts are archived under `aborted/srp_dnn_block5_20261112/` and its
+  metrics are not cited.
+- `tf_mamba_512_s42` (`queue/tf_mamba_512_2026-11-12.json`, GPU1): the
+  `n_fft=512` front-end variant, `tf_mamba_dicit_512.toml`, against the
+  running 1536/480 run.
+
+Both are pending until a GPU1 slot frees.  Every attempt's status is recorded
+in the `RESULTS.md` run log; job ids in historical `queue/` files keep their
+original `_vN` names.

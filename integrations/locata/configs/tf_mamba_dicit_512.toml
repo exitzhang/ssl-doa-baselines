@@ -1,0 +1,65 @@
+# TF-Mamba (n_fft=512 front-end variant): 93.75 Hz bins, 100-8000 Hz -> 84
+# bins.  Identical recipe to tf_mamba_dicit.toml except n_fft.  Adapted
+# setting, not the paper's 31.25 Hz / 32 ms front end; see RESULTS.md.
+[run]
+seed = 42
+output_root = "runs"
+
+[model]
+name = "tf_mamba"
+num_mics = 3
+sample_rate = 48000
+n_fft = 512
+hop_length = 480
+freq_min = 100.0
+freq_max = 8000.0
+d_model = 64
+num_blocks = 5
+expand_factors = [2, 2, 4, 4, 8]
+d_state = 16
+d_conv = 4
+output_dim = 181
+activation = "sigmoid"
+
+[train]
+# Formal comparison budget: 100 epochs, patience 6 eval rounds (early stop).
+epochs = 100
+# fp16 autocast made the forward pass go NaN on real batches (step ~132, 12.8 GiB
+# peak at bs8 in fp32); batch 16 in fp32 exceeds 24 GiB.
+batch_size = 8
+num_workers = 16
+lr = 1.0e-4
+optimizer = "adamw"
+weight_decay = 0.01
+scheduler = "cosine"
+eta_min = 1.0e-6
+eval_every = 5
+patience = 6
+amp = false
+seed = 42
+
+[data]
+out_bins = 181
+# Match the mainline V5 baseline B0 and the Parallel arms, which train with
+# --label_sigma 3 (Record/reports/v5_par_local_summary_2026-11-09.md).  The
+# sigma=1.5 recipes (A0/A1/A2) are coarse-to-fine controls, not the baseline.
+label_sigma = 3.0
+max_sources = 3
+target_num_samples = 16000
+mic_indices = [5, 6, 8]
+use_aug = true
+enable_noise = true
+noise_snr = [5.0, 30.0]
+val_noise_snr = [5.0, 30.0]
+noise_mix_weights = [1.0, 0.0, 1.0]
+
+[decode]
+ratio_thresholds = [
+  0.01, 0.02, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.65, 0.8,
+]
+acc_thresholds = [5, 10, 15]
+max_sources = 3
+source_column = 10
+silence_max_thresh_val = 0.0
+silence_max_thresh_dicit = 0.1
+far_target = 0.03

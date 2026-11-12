@@ -1,4 +1,4 @@
-# Main table (SRP-DNN rerun pending; TF-Mamba running; IcoCNN paused — too slow to share a GPU)
+# Main table (SRP-DNN and TF-Mamba 512 queued; TF-Mamba 1536 running; IcoCNN paused — too slow to share a GPU)
 
 Protocol: 48 kHz, 16,000-sample clips, mics `5,6,8`, azimuth 0°–180°,
 10° one-to-one matching, azimuth-only MAE.  Operating points are locked on the
@@ -45,9 +45,10 @@ imports the pinned commit.
 
 | Method | Run | F1@10° | 1-src F1 | 2-src F1 | 3-src F1 | FAR | R@FAR 3% | MAE (°) | Params | Forward ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| TF-Mamba | `tf_mamba_s42` (running; artifact `runs/tf_mamba_spectrum_s42`) | — | — | — | — | — | — | — | 1.41 M | — |
+| TF-Mamba (n_fft=1536) | `tf_mamba_s42` (running; artifact `runs/tf_mamba_spectrum_s42`) | — | — | — | — | — | — | — | 1.41 M | — |
+| TF-Mamba (n_fft=512) | `tf_mamba_512_s42` (queued 2026-11-12, pending GPU1 slot) | — | — | — | — | — | — | — | 1.41 M | — |
 | IcoCNN (multi-source) | `icocnn_multi_s42` (paused — rerun when a GPU is idle) | — | — | — | — | — | — | — | 6.17 M | — |
-| SRP-DNN | `srp_dnn_s42` (rerun pending) | — | — | — | — | — | — | — | 0.86 M | — |
+| SRP-DNN | `srp_dnn_s42` (queued 2026-11-12, pending GPU1 slot) | — | — | — | — | — | — | — | 0.86 M | — |
 
 The previous SRP-DNN attempt is **aborted**: the forward applied only four
 CRNN blocks because `zip(self.blocks, self.pools)` stops after the four pools,
@@ -108,18 +109,19 @@ DICIT frame counts (for reference): 926 frames total, 176 / 379 / 371 for
 |---|---|---|---|
 | TF-Mamba | — | — | — |
 | IcoCNN | — | — | — |
-| SRP-DNN | rerun pending | — | — |
+| SRP-DNN | queued | — | — |
 
-## Planned (not queued)
-
-These entries are recorded for the backlog but are **not** submitted to
-`gpu_queue` yet.
+## Queue status
 
 | Plan | Status | Setting | Purpose |
 |---|---|---|---|
-| `tf_mamba_512_s42` | planned; smoke passed 2026-11-12; not queued | `n_fft=512`, `hop_length=480`, 100–8000 Hz (84 bins), 3 mics, Q=181, 100 epochs / patience 6 / seed 42 | Front-end ablation against the 1536/480 paper-equivalent run. The 512 front end is 10.7 ms / 93.75 Hz, not the paper's 32 ms / 31.25 Hz, so it is an adapted setting. Smoke: 1,408,725 params, output (2, 181), peak decode and checkpoint round-trip OK; random-input `mse_kl_loss` backward finite. |
-| `srp_dnn_s42` | ready; CRNN fix applied and tested; queue file prepared, not submitted | same `srp_dnn_dicit.toml` recipe (100 epochs / patience 6 / seed 42) | Replace the aborted 4-block run in the main table. `tests/test_srp_dnn.py` now asserts all five CRNN blocks execute and that `blocks[4]` receives gradients. |
-| `icocnn_multi_s42` | ready; **run when a GPU is idle** (too slow to share one) | reference head (last conv → `M` + Soft-ArgMax), `lr 1e-4`, cross-pair-only SRP maps, 100 epochs / patience 6 / seed 42 | Main-table IcoCNN row. ~37 min/epoch with GPU1 at 2/2 slots vs ~24 min solo; epoch 1 was healthy (train 0.0224 / val 0.0212). |
+| `srp_dnn_s42` | **queued 2026-11-12**, GPU1, waiting for a slot (`queue/srp_dnn_2026-11-12.json`) | `srp_dnn_dicit.toml` (win 1536 / hop 768 / n_fft 1536, 100–8000 Hz, 100 epochs / patience 6 / seed 42) | Replace the aborted 4-block run in the main table. `tests/test_srp_dnn.py` asserts all five CRNN blocks execute and that `blocks[4]` receives gradients. |
+| `tf_mamba_512_s42` | **queued 2026-11-12**, GPU1, waiting for a slot (`queue/tf_mamba_512_2026-11-12.json`) | `tf_mamba_dicit_512.toml`: `n_fft=512`, `hop_length=480`, 100–8000 Hz (84 bins), 3 mics, Q=181, 100 epochs / patience 6 / seed 42 | Front-end ablation against the running 1536/480 run. The 512 front end is 10.7 ms / 93.75 Hz, not the paper's 32 ms / 31.25 Hz, so it is an adapted setting. Smoke: 1,408,725 params, output (2, 181), peak decode and checkpoint round-trip OK; random-input `mse_kl_loss` backward finite. |
+| `icocnn_multi_s42` | backlog; **run when a GPU is idle** (too slow to share one) | reference head (last conv → `M` + Soft-ArgMax), `lr 1e-4`, cross-pair-only SRP maps, 100 epochs / patience 6 / seed 42 | Main-table IcoCNN row. ~37 min/epoch with GPU1 at 2/2 slots vs ~24 min solo; epoch 1 was healthy (train 0.0224 / val 0.0212). |
+
+GPU0 runs `tf_mamba_s42` at 1/1 slots; GPU1 is at 2/2
+(`azreg_feature_query_s42_v2`, `nfft1024_parallel_s42`), so both new jobs stay
+pending until a GPU1 slot frees.
 
 The aborted SRP-DNN attempt stays in the run log as evidence of the bug; do not
 cite its metrics as the SRP-DNN row until `srp_dnn_s42` is available.
@@ -148,4 +150,5 @@ cited as results.
 | `icocnn_multi_s42_v5` | aborted — early stopping counted epochs, not validation rounds | canceled 2026-11-12 15:49 before the first epoch so the fix could take effect |
 | `icocnn_multi_s42_v5b` | aborted — no `train.log` in the run directory | canceled 2026-11-12 16:01 after 9 min; restarted after adding the log tee |
 | `icocnn_multi_s42_v5c` | paused — training too slow on a shared GPU; no result | `aborted/icocnn_slow_20261112/`; canceled 2026-11-12 17:04 after epoch 1 (train 0.0224 / val 0.0212, no collapse); ~37 min/epoch with GPU1 at 2/2 slots vs ~24 min solo; rerun when a GPU is idle |
-| `srp_dnn_s42` | prepared, not submitted | queue file `queue/srp_dnn_2026-11-12.json`; output `runs/srp_dnn_s42`; fixed five-block forward |
+| `srp_dnn_s42` | pending — submitted 2026-11-12, waiting for a GPU1 slot | output `runs/srp_dnn_s42`; fixed five-block forward |
+| `tf_mamba_512_s42` | pending — submitted 2026-11-12, waiting for a GPU1 slot | output `runs/tf_mamba_512_s42`; `tf_mamba_dicit_512.toml` (`n_fft=512`) |
