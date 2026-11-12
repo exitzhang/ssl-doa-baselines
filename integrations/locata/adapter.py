@@ -283,7 +283,12 @@ def train_tf_mamba(model, data_cfg, train_cfg, *, device_index: int,
 
 def train_native(model, data_cfg, train_cfg, *, out_dir: str, seed: int,
                  device: str) -> str:
-    """Train IcoCNN / SRP-DNN with the package loop on LOCATA angle labels."""
+    """Train IcoCNN / SRP-DNN with the package loop on LOCATA angle labels.
+
+    Follows ``train_tf_mamba``'s logging contract: epoch lines are written to
+    ``<out_dir>/train.log`` in addition to stdout (which gpu_queue keeps in
+    ``Record/queue/state/jobs/<job>/command.log``).
+    """
     train_ds = build_angle_dataset(data_cfg["train_root"], data_cfg, use_val=False)
     val_ds = build_angle_dataset(data_cfg["val_root"], data_cfg, use_val=True)
     batch_size = int(train_cfg.get("batch_size", 8))
@@ -292,23 +297,31 @@ def train_native(model, data_cfg, train_cfg, *, out_dir: str, seed: int,
                                 shuffle=True, drop_last=True)
     val_loader = build_loader(val_ds, batch_size=batch_size, num_workers=workers,
                               shuffle=False)
-    fit(
-        model, train_loader, val_loader,
-        epochs=int(train_cfg.get("epochs", 100)),
-        device=device,
-        lr=float(train_cfg.get("lr", 1e-3)),
-        weight_decay=float(train_cfg.get("weight_decay", 0.01)),
-        optimizer=str(train_cfg.get("optimizer", "adamw")),
-        scheduler=train_cfg.get("scheduler", "cosine"),
-        eta_min=float(train_cfg.get("eta_min", 1e-6)),
-        amp=bool(train_cfg.get("amp", True)),
-        grad_clip=float(train_cfg.get("grad_clip", 1.0)),
-        save_dir=out_dir,
-        eval_every=int(train_cfg.get("eval_every", 1)),
-        patience=train_cfg.get("patience"),
-        config={"model": dict(model.config, name=model.model_name),
-                "train": train_cfg, "data": data_cfg},
-    )
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    with open(out_path / "train.log", "w", buffering=1) as log_file:
+        def log_fn(line: str) -> None:
+            log_file.write(line + "\n")
+            print(line, flush=True)
+
+        fit(
+            model, train_loader, val_loader,
+            epochs=int(train_cfg.get("epochs", 100)),
+            device=device,
+            lr=float(train_cfg.get("lr", 1e-3)),
+            weight_decay=float(train_cfg.get("weight_decay", 0.01)),
+            optimizer=str(train_cfg.get("optimizer", "adamw")),
+            scheduler=train_cfg.get("scheduler", "cosine"),
+            eta_min=float(train_cfg.get("eta_min", 1e-6)),
+            amp=bool(train_cfg.get("amp", True)),
+            grad_clip=float(train_cfg.get("grad_clip", 1.0)),
+            save_dir=out_dir,
+            eval_every=int(train_cfg.get("eval_every", 1)),
+            patience=train_cfg.get("patience"),
+            config={"model": dict(model.config, name=model.model_name),
+                    "train": train_cfg, "data": data_cfg},
+            log_fn=log_fn,
+        )
     best = Path(out_dir) / "best.pth"
     ckpt = torch.load(best, map_location="cpu", weights_only=False)
     model.load_state_dict(ckpt["state_dict"])
