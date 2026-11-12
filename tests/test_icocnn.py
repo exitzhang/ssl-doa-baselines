@@ -20,6 +20,30 @@ def tiny_model():
     )
 
 
+def test_head_matches_reference_architecture():
+    """arXiv:2210.14536: only the last temporal conv outputs M channels."""
+    model = tiny_model()
+    assert model.temp_cnn[-1].conv.out_channels == 10
+    assert all(m.conv.out_channels == 8 for m in model.temp_cnn[:-1])
+    assert not hasattr(model, "head")
+    assert not hasattr(model, "head_norm")
+
+
+def test_output_is_bounded_and_input_dependent():
+    """Soft-ArgMax output norms are activities in [0, 1]; the trunk is not dead."""
+    model = tiny_model()
+    model.eval()
+    torch.manual_seed(0)
+    wav_a = torch.randn(1, 2048, 3)
+    wav_b = torch.randn(1, 2048, 3)
+    with torch.no_grad():
+        out_a = model(wav_a)["accdoa"]
+        out_b = model(wav_b)["accdoa"]
+    norms = out_a.norm(dim=-1)
+    assert float(norms.max()) <= 1.0 + 1e-4
+    assert float((out_a - out_b).abs().max()) > 1e-6
+
+
 def test_forward_shape_and_decode():
     model = tiny_model()
     model.eval()
@@ -96,3 +120,16 @@ def test_srp_steering_uses_unit_grid_in_label_frame():
     scores = maps[0, 0].numpy().reshape(-1)
     peak = grid[np.flatnonzero(horizontal)[np.argmax(scores[horizontal])]]
     assert peak[0] == pytest.approx(np.cos(np.deg2rad(60.0)), abs=0.15)
+
+
+def test_srp_ignores_self_pair_constant():
+    """PHAT self-pairs add a constant; with 3 mics they must not flatten the map."""
+    from ssl_doa_baselines.icocnn.srp import SRPIcosahedralMap
+
+    srp = SRPIcosahedralMap(3, 1024, 3, MIC, 48000, tau_max=8)
+    gcc = torch.randn(1, 3, 3, 17)
+    maps = srp(gcc)
+    changed = gcc.clone()
+    for i in range(3):
+        changed[:, i, i, :] = 100.0
+    assert torch.allclose(maps, srp(changed))

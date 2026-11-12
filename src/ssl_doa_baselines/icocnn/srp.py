@@ -38,7 +38,15 @@ class GCC(nn.Module):
 
 
 class SRPIcosahedralMap(nn.Module):
-    """Sum GCC-PHAT lags over all microphone pairs at every grid point."""
+    """Sum GCC-PHAT lags over the microphone cross-pairs at every grid point.
+
+    Self-pairs are skipped: their PHAT cross-correlation is a delta at lag 0,
+    i.e. a constant added to every grid point.  With the reference's 12-mic
+    array that constant is a small fraction of the sum, but with the 3-mic
+    DICIT array it is a third of the total and flattens the map (measured:
+    mean 0.40 vs 0.08, std 0.16 vs 0.25).  It carries no directional
+    information, so dropping it is part of adapting SRP-PHAT to 3 mics.
+    """
 
     def __init__(self, N: int, K: int, r: int, mic_positions: np.ndarray,
                  fs: int, c: float = 343.0, normalize: bool = True,
@@ -82,6 +90,8 @@ class SRPIcosahedralMap(nn.Module):
         maps = torch.zeros(batch_shape + self.grid_shape, device=gcc.device, dtype=gcc.dtype)
         for n in range(self.N):
             for m in range(self.N):
+                if n == m:
+                    continue
                 vals = gcc[..., n, m, :].reshape(
                     batch_shape + (1,) * n_grid + (gcc.shape[-1],)
                 ).expand(batch_shape + self.grid_shape + (gcc.shape[-1],))

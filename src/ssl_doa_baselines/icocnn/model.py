@@ -1,13 +1,15 @@
 """Multi-source IcoCNN: spherical SRP-PHAT -> icosahedral CNN -> ACCDOA slots.
 
-The spherical convolution stack follows David Diaz-Guerra's ``icoCNN`` /
-``icoDOA`` (AGPL-3.0).  The single-source Soft-ArgMax head is replaced by a
-linear multi-slot ACCDOA head (``M`` 3-D vectors, empty slots zero), as used by
-the multi-source IcoCNN paper (arXiv:2210.14536 / arXiv:2306.08510).
-
-Deviation from the upstream tracking model: the final causal temporal
-convolution keeps ``width`` channels instead of collapsing to one, because the
-multi-slot head needs a wider per-frame feature.  No other layer changes.
+The spherical convolution stack and Soft-ArgMax readout follow David
+Diaz-Guerra's ``icoCNN`` / ``icoDOA`` (AGPL-3.0).  The multi-source adaptation
+is the one described in arXiv:2210.14536: all convolutions keep ``width``
+channels except the last causal temporal convolution, which outputs ``M``
+channels; the Soft-ArgMax then maps each channel's spherical distribution to
+one 3-D vector whose direction is the DOA and whose norm is the activity.
+Empty slots are supervised towards the zero vector.  No layer beyond that
+1->M change departs from the single-source reference model.  The SRP front end
+sums microphone cross-pairs only (the PHAT self-pair term is a constant that
+would dominate the map with 3 microphones); see ``srp.py``.
 """
 
 from typing import Dict, List, Optional, Sequence
@@ -18,6 +20,8 @@ import torch.nn as nn
 from einops import rearrange, reduce
 
 from .conv import CleanVertices, ConvIco, LNormIco, PoolIco, SmoothVertices
+from .grid import icosahedral_grid_coordinates
+from .readout import SoftArgMax
 from .srp import IcosahedralSRP
 
 
@@ -95,15 +99,22 @@ class IcoCNNMultiSource(nn.Module):
                        smooth_vertices=smooth_vertices)
                for i in range(1, deep)]
         )
+        # arXiv:2210.14536: every convolution has ``width`` channels except the
+        # last temporal convolution, which has ``M`` (= ``n_slots``).
         self.temp_cnn = nn.ModuleList(
-            [CausConv1d(width, width, temporal_kernel) for _ in range(deep)]
+            [CausConv1d(width, width, temporal_kernel) for _ in range(deep - 1)]
+            + [CausConv1d(width, self.n_slots, temporal_kernel)]
         )
         self.layer_norm = nn.ModuleList([LNormIco(width, 6) for _ in range(deep)])
         self.poolings = nn.ModuleList([PoolIco(self.r - i, 6) for i in range(self.r)])
 
-        feat_dim = width * 5 * 2 * 4   # after r -> 1: 5 charts x 2 x 4
-        self.head_norm = nn.LayerNorm(feat_dim)
-        self.head = nn.Linear(feat_dim, self.n_slots * 3)
+        # Upstream readout: collapse the 6 kernel orientations, clean the
+        # icosahedral vertices, and take the expected direction per channel.
+        self.clean_vertices = CleanVertices(1)
+        ico_grid = torch.from_numpy(icosahedral_grid_coordinates(1)).float()
+        ico_grid = rearrange(ico_grid, "charts H W coors -> coors charts H W",
+                             charts=5, coors=3)
+        self.sam = SoftArgMax((5, 2, 4), indexes=ico_grid, include_exp=True)
 
         self.config = {
             "n_mics": self.n_mics,
@@ -143,14 +154,13 @@ class IcoCNNMultiSource(nn.Module):
                 r -= 1
                 H //= 2
                 W //= 2
-        return reduce(x, "B T C R charts H W -> B T (C charts H W)", "max", R=6)
+        return reduce(x, "B T C R charts H W -> B T C charts H W", "max", R=6, charts=5)
 
     def forward(self, waveform: torch.Tensor) -> Dict[str, object]:
         """Return ``{"accdoa": (B, T, M, 3), "times": List[List[float]]}``."""
         maps, times = self.srp(waveform)          # (B, T, 5, H, W)
-        feats = self._apply_ico_cnn(maps)         # (B, T, D)
-        out = self.head(self.head_norm(feats))
-        accdoa = out.reshape(out.shape[0], out.shape[1], self.n_slots, 3)
+        feats = self._apply_ico_cnn(maps)         # (B, T, M, 5, H, W)
+        accdoa = self.sam(self.clean_vertices(feats))
         return {"accdoa": accdoa, "times": times}
 
     def predict_native(self, waveform: torch.Tensor) -> Dict[str, object]:

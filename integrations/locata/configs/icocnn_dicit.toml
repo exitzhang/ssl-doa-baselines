@@ -20,7 +20,11 @@ smooth_vertices = true
 epochs = 100
 batch_size = 8
 num_workers = 8
-lr = 1.0e-3
+# 1e-4 matches the author's `1sourceTracking_icoCNN.py`.  At 1e-3 the
+# Soft-ArgMax's near-uniform init (output ~1e-4) is destroyed by the first
+# AdamW step and the model lands on the zero solution (loss = 1/30 with one
+# active source); verified by a fixed-batch screen on 2026-11-12.
+lr = 1.0e-4
 optimizer = "adamw"
 weight_decay = 0.01
 scheduler = "cosine"

@@ -22,10 +22,21 @@ the icosahedral CNN code is AGPL-3.0.
 - Upstream: <https://github.com/DavidDiazGuerra/icoDOA>
 - Commit used: `04d1a89594c78ae3cf42f07d94c3737bdc1f7c82` (2022-05-19)
 - License: AGPL-3.0
-- Ported into `src/ssl_doa_baselines/icocnn/srp.py` (`GCC`, spherical SRP map)
-  and the causal temporal convolution in `icocnn/model.py`.
+- Ported into `src/ssl_doa_baselines/icocnn/srp.py` (`GCC`, spherical SRP map),
+  `icocnn/readout.py` (`SoftArgMax`) and the causal temporal convolution in
+  `icocnn/model.py`.
 - Changes: 48 kHz / 12,288-sample window / 1,536-sample hop for 16,000-sample
-  clips; vectorised SRP gather; multi-slot ACCDOA head replacing Soft-ArgMax.
+  clips; vectorised SRP gather; SRP maps sum microphone *cross-pairs* only.
+  The PHAT self-correlation is a constant at lag 0, i.e. a constant added to
+  every grid point; with the reference 12-mic array it is a small part of the
+  sum, but with the 3-mic DICIT array it is a third of the sum and flattens the
+  map (mean 0.40 vs 0.08, std 0.16 vs 0.25).  It carries no directional
+  information, so it is dropped.  The multi-source head follows
+  arXiv:2210.14536 exactly: the last temporal convolution outputs `M` channels
+  instead of one, and the author's Soft-ArgMax maps each channel to a 3-D
+  ACCDOA vector (direction = DOA, norm = activity).  Training uses the author's
+  learning rate (`lr=1e-4` in `1sourceTracking_icoCNN.py`); at 1e-3 the
+  Soft-ArgMax's near-uniform initialisation collapses to the zero output.
 - Related papers:
   - D. Diaz-Guerra, J. R. Beltran, *"Direction of arrival estimation in
     dynamic acoustic scenes with two-dimensional convolutional recurrent
