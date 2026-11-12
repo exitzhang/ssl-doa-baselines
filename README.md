@@ -161,7 +161,7 @@ GPU_QUEUE_CONFIG=/path/to/Record/queue/gpu-queue.config.json \
 python -m gpu_queue submit /path/to/Record/queue/state jobs.json
 ```
 
-Submit `icocnn_multi_s42` and `srp_dnn_idl_s42` the same way with their configs.
+Submit `icocnn_multi_s42` and `srp_dnn_s42` the same way with their configs.
 
 ### Shared training budget
 
@@ -189,26 +189,32 @@ integrations/locata/
   configs/              one TOML recipe per model + data_local.example.toml
 examples/make_synthetic.py
 tests/
+runs/                   active and completed run artifacts (git-ignored)
+aborted/                artifacts of aborted attempts (git-ignored)
 ```
 
 ## Status
 
 Smoke tests (GPU forward, native decode, checkpoint reload) pass for all three
-models; the 20-case CPU unit suite covers shapes, PIT invariance, IDL on ideal
-DP-IPD, label conversion, SRP steering and the import boundary.
+models; the 28-case CPU unit suite covers shapes, PIT invariance, IDL on ideal
+DP-IPD, label conversion, SRP steering, the five-block CRNN forward and the
+import boundary.
 
-On 2026-11-10 the three formal jobs (`tf_mamba_spectrum_s42_dev`,
-`icocnn_multi_s42_dev`, `srp_dnn_idl_s42_dev`) were submitted to `gpu_queue`
-with the shared 15-epoch budget and `--locata-root` pinned to the `dev`
-worktree.  SRP-DNN finished; TF-Mamba hit an fp16 overflow and IcoCNN ran on a
-pathologically slow version of the vendored layers, so on 2026-11-11 both were
-resubmitted in fp32 as `queue/external_baselines_2026-11-11_v2.json`
-(`tf_mamba_spectrum_s42_v2`, `icocnn_multi_s42_v2`).  Results are filled into
-`RESULTS.md` as each job finishes.
+On 2026-11-10 the three formal jobs (TF-Mamba `_dev`, IcoCNN `_dev`, SRP-DNN
+`_dev`) were submitted to `gpu_queue` with the shared 15-epoch budget and
+`--locata-root` pinned to the `dev` worktree.  That budget was abandoned: the
+V5 mainline picks its best epoch around 30, so 15 epochs sat at a quarter of
+the comparison budget.  TF-Mamba's `_dev` run also hit an fp16 overflow, and
+IcoCNN's ran on a pathologically slow version of the vendored layers.
 
-On 2026-11-11 the budget was raised to 100 epochs / `patience 6` for all three
-rows; SRP-DNN's 15-epoch run is archived and re-queued as
-`srp_dnn_idl_s42_v4c` (`queue/external_baselines_2026-11-11_srp100.json`, GPU1,
-one slot).  The `_v4b` attempt was canceled because three concurrent jobs
-saturated the shared NFS dataset; the recipe is unchanged and the queued job
-starts from scratch.
+The current canonical runs are `tf_mamba_s42` (artifact
+`runs/tf_mamba_spectrum_s42`) and `icocnn_multi_s42` (artifact
+`runs/icocnn_multi_s42_v5`), both on `gpu_queue` with 100 epochs /
+`patience 6` / seed 42.  `srp_dnn_s42` is prepared in
+`queue/srp_dnn_2026-11-12.json` (GPU1, one slot) but not submitted: the
+previous SRP-DNN run executed only four of the five CRNN blocks
+(`zip(self.blocks, self.pools)` stops after the four pools), so its artifacts
+are archived under `aborted/srp_dnn_block5_20261112/` and its metrics are
+not cited.  The forward is fixed and covered by regression tests.  Every
+attempt's status is recorded in the `RESULTS.md` run log; job ids in historical
+`queue/` files keep their original `_vN` names.

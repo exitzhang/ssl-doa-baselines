@@ -11,4 +11,5 @@ dist/
 *.log
 outputs/
 runs/
+aborted/
 integrations/locata/configs/data_local.toml

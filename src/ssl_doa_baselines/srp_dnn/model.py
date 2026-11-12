@@ -81,6 +81,11 @@ class CRNN(nn.Module):
         # parameters and preserves the 12x total time reduction for long clips.
         for block, pool in zip(self.blocks, self.pools):
             x = pool(block(x))
+        # Upstream interleaves five blocks with five pools:
+        # block1 -> pool1 -> ... -> block4 -> pool4 -> block5 -> pool(2,3).
+        # ``pools`` has only the first four entries (the final pool is applied
+        # below), so ``zip`` leaves the last block out; run it explicitly.
+        x = self.blocks[-1](x)
         kt = min(3, x.shape[-1])
         if x.shape[-1] >= 3:
             x = torch.nn.functional.max_pool2d(x, kernel_size=(2, 3))

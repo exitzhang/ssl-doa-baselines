@@ -54,3 +54,30 @@ def test_decode_runs():
     dets = model.decode(torch.randn(2, 4096, 3), threshold_abs=0.0, max_sources=3)
     assert len(dets) == 2
     assert all(len(row) <= 3 for row in dets)
+
+
+def test_all_five_crnn_blocks_execute():
+    """Upstream has five blocks and five pools; the port must not skip block 5."""
+    model = tiny_model()
+    calls = []
+    handles = [
+        block.register_forward_hook(
+            lambda _module, _inputs, _output, idx=idx: calls.append(idx))
+        for idx, block in enumerate(model.crnn.blocks)
+    ]
+    try:
+        model(torch.randn(1, 4096, 3))
+    finally:
+        for handle in handles:
+            handle.remove()
+    assert calls == [0, 1, 2, 3, 4]
+
+
+def test_last_crnn_block_receives_gradients():
+    model = tiny_model()
+    loss = model.training_loss(
+        torch.randn(1, 4096, 3), [np.array([[20.0, 90.0]])])
+    loss.backward()
+    grads = [p.grad for p in model.crnn.blocks[-1].parameters()]
+    assert grads and all(g is not None for g in grads)
+    assert any(float(g.abs().sum()) > 0.0 for g in grads)
