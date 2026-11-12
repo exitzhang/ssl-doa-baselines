@@ -120,21 +120,33 @@ def fit(model: torch.nn.Module, train_loader, val_loader=None, *,
             f"lr={row['lr']:.2e} ({row['seconds']:.1f}s)"
         )
 
-        monitor = val_loss if val_loss is not None else train_loss
-        improved = monitor < best
-        if improved:
-            best = monitor
-            stale = 0
-        else:
-            stale += 1
+        # Early stopping follows LOCATA's Trainer: with a validation set,
+        # ``patience`` counts *validation rounds* (eval_every epochs apart) and
+        # only the validation loss can reset or increment the counter.  Epochs
+        # without validation leave the counter untouched.  Without a validation
+        # set, the training loss is the monitor.
+        if val_loader is None:
+            improved = train_loss < best
+            if improved:
+                best = train_loss
+                stale = 0
+            else:
+                stale += 1
+        elif val_loss is not None:
+            improved = val_loss < best
+            if improved:
+                best = val_loss
+                stale = 0
+            else:
+                stale += 1
+            if save_dir and improved:
+                save_checkpoint(save_dir / "best.pth", model, epoch=epoch,
+                                optimizer=optimizer, config=config,
+                                extra={"history": history, "best_loss": best})
         if save_dir:
             save_checkpoint(save_dir / "last.pth", model, epoch=epoch,
                             optimizer=optimizer, config=config,
                             extra={"history": history})
-            if improved:
-                save_checkpoint(save_dir / "best.pth", model, epoch=epoch,
-                                optimizer=optimizer, config=config,
-                                extra={"history": history, "best_loss": best})
         if patience is not None and stale >= patience:
             log_fn(f"early stopping at epoch {epoch + 1} (best={best:.6f})")
             break
