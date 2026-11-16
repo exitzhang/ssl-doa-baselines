@@ -803,8 +803,6 @@ def benchmark_inference(model, batches: List[torch.Tensor], *,
 
 
 def score_by_source_count(gts, pred_all, *, acc_thresholds=(5, 10, 15)) -> Dict[str, dict]:
-    from engine import score_decoded
-
     out = {}
     labels = np.array([len(g) for g in gts])
     for n in (0, 1, 2, 3):
@@ -813,6 +811,8 @@ def score_by_source_count(gts, pred_all, *, acc_thresholds=(5, 10, 15)) -> Dict[
         if idx.size == 0:
             out[key] = {"frames": 0}
             continue
+        from engine import score_decoded
+
         sub_gts = [gts[i] for i in idx]
         sub_pred = [pred_all[i] for i in idx]
         metrics, _, peaks = score_decoded(sub_gts, sub_pred,
