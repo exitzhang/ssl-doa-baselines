@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ssl-doa-baselines"
 version = "0.1.0"
-description = "Standalone multi-source DOA baselines (TF-Mamba, multi-source IcoCNN, SRP-DNN)"
+description = "Standalone multi-source DOA baselines (TF-Mamba, multi-source IcoCNN, SRP-DNN, IPDnet, IPDnet2-Small)"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "Proprietary" }
@@ -22,7 +22,9 @@ torch = ["torch>=2.0"]
 tf-mamba = ["torch>=2.0", "mamba-ssm==2.1.0"]
 icocnn = ["torch>=2.0", "einops>=0.6"]
 srp-dnn = ["torch>=2.0"]
-all = ["torch>=2.0", "mamba-ssm==2.1.0", "einops>=0.6"]
+ipdnet = ["torch>=2.0", "torchaudio>=2.0"]
+ipdnet2 = ["torch>=2.0", "torchaudio>=2.0", "mamba-ssm==2.1.0"]
+all = ["torch>=2.0", "torchaudio>=2.0", "mamba-ssm==2.1.0", "einops>=0.6"]
 
 [project.scripts]
 ssl-doa-baselines = "ssl_doa_baselines.cli:main"

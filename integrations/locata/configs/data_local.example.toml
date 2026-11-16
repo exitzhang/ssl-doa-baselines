@@ -1,4 +1,7 @@
 # Copy to data_local.toml and point at your datasets / geometry source.
+# TF-Mamba, IcoCNN, SRP-DNN, IPDnet and IPDnet2-Small all use these roots and
+# the `mic_positions_source` geometry.  The IPDnet models read the same 48 kHz /
+# 16,000-sample clips and resample to 16 kHz internally.
 [data]
 train_root = "/path/to/train_clean100_edge10"
 val_root = "/path/to/locata_simulated_train_maxsource3_val12000_edge10"

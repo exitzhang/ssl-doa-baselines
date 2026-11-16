@@ -7,7 +7,10 @@ simulated validation set; DICIT curves are reported separately.
 **Status 2026-11-16.** Three runs are complete and evaluated on DICIT:
 `tf_mamba_s42` (n_fft=1536), `tf_mamba_512_s42`, `srp_dnn_s42`.  IcoCNN has
 **no completed run** — every attempt so far is aborted or paused (see the run
-log), so its main-table row stays empty.
+log), so its main-table row stays empty.  Two new rows are queued:
+`ipdnet_s42` and `ipdnet2_small_s42` (fixed 3-microphone ports of
+`FN-SSL@76fcb281`, clip-level DP-IPD PIT; see `THIRD_PARTY.md`).  Their cells
+stay `pending` until the validation lock and DICIT evaluation finish.
 
 **Naming.**  Canonical runs use the model name plus the seed only
 (`srp_dnn_s42`, `tf_mamba_s42`, `icocnn_multi_s42`); front-end or task variants
@@ -69,6 +72,8 @@ not a DICIT number.
 | TF-Mamba (n_fft=1536) | `tf_mamba_s42` → `runs/tf_mamba_spectrum_s42` | **0.9338** | 0.7848 | 0.9515 | 0.9520 | 0.0782 | —¹ | **1.47** | 1.41 M | 3.40 |
 | TF-Mamba (n_fft=512) | `tf_mamba_512_s42` | 0.9294 | 0.8333 | 0.9522 | 0.9320 | **0.0630** | **0.7838** | 1.53 | 1.41 M | 3.41 |
 | SRP-DNN | `srp_dnn_s42` | 0.7665 | **0.8579** | 0.7850 | 0.7354 | 0.1343 | —² | 3.26 | 0.86 M | **1.78** |
+| IPDnet (fixed 3-mic, DP-IPD) | `ipdnet_s42` → `runs/ipdnet_s42` | pending | pending | pending | pending | pending | pending | pending | 0.35 M | pending |
+| IPDnet2-Small (fixed 3-mic, DP-IPD) | `ipdnet2_small_s42` → `runs/ipdnet2_small_s42` | pending | pending | pending | pending | pending | pending | pending | 1.25 M | pending |
 | IcoCNN (multi-source) | `icocnn_multi_s42` | — | — | — | — | — | — | — | 6.17 M | — |
 
 ¹ Lowest DICIT FAR on the TF-Mamba-1536 curve is 0.0308, just above the 3%
@@ -97,6 +102,8 @@ since the other two spend 3.4 ms.  All three produce varied outputs
 | TF-Mamba (1536) | 0.30 | 0.9152 | 0.0357 |
 | TF-Mamba (512) | 0.30 | 0.8874 | 0.0439 |
 | SRP-DNN | 0.45 | 0.7006 | 0.1657 |
+| IPDnet | pending | pending | pending |
+| IPDnet2-Small | pending | pending | pending |
 | IcoCNN | — | — | — |
 
 The validation lock is the only place the operating point is chosen; the DICIT
@@ -112,6 +119,8 @@ the validation numbers by construction (`_eval_payload` in
 | `srp_dnn_s42` | **done 2026-11-13 05:12** (`runs/srp_dnn_s42`) | `srp_dnn_dicit.toml` (win 1536 / hop 768 / n_fft 1536, 100–8000 Hz, 100 epochs / patience 6 / seed 42, five-block forward) | Main-table SRP-DNN row; replaced the aborted 4-block run. |
 | `tf_mamba_512_s42` | **done 2026-11-15 00:40** (`runs/tf_mamba_512_s42`) | `tf_mamba_dicit_512.toml`: `n_fft=512`, `hop_length=480`, 100–8000 Hz (84 bins), 3 mics, Q=181, 100 epochs / patience 6 / seed 42 | Front-end ablation against the 1536/480 run. The 512 front end is 10.7 ms / 93.75 Hz, not the paper's 32 ms / 31.25 Hz, so it is an adapted setting. |
 | `tf_mamba_s42` | **done 2026-11-14 15:45** (`runs/tf_mamba_spectrum_s42`) | `n_fft=1536`, `hop_length=480`, Q=181, 100 epochs / patience 6 / seed 42, fp32 batch 8, `label_sigma=3.0` | Main-table TF-Mamba row. |
+| `ipdnet_s42` | **queued** (`queue/ipdnet_512_s42.json`) | `ipdnet_dicit.toml`: 48->16 kHz, 512 FFT / hop 256, 3 tracks, Adam lr 5e-4, exponential 0.975, 100 epochs / patience 6 / seed 42 | Main-table IPDnet row; clip-level DP-IPD PIT, projection-ratio decode. |
+| `ipdnet2_small_s42` | **queued** (`queue/ipdnet2_small_512_s42.json`) | `ipdnet2_small_dicit.toml`: 48->16 kHz, 512 FFT / hop 320, 8 layers / hidden 96 / `mamba(16,4)`, AdamW, 100 epochs / patience 6 / seed 42 | Main-table IPDnet2-Small row; negative-MSE decode. Needs the `locata` env's `mamba-ssm==2.1.0`. |
 | `icocnn_multi_s42` | backlog; **run when a GPU is idle** (too slow to share one) | reference head (last conv → `M` + Soft-ArgMax), `lr 1e-4`, cross-pair-only SRP maps, 100 epochs / patience 6 / seed 42 | Main-table IcoCNN row. ~37 min/epoch with GPU1 at 2/2 slots vs ~24 min solo; the paused epoch-1 attempt was healthy (train 0.0224 / val 0.0212). |
 
 ## Run log
@@ -140,6 +149,8 @@ cited as results.
 | `icocnn_multi_s42_v5c` | paused — training too slow on a shared GPU; no result | `aborted/icocnn_slow_20261112/`; canceled 2026-11-12 17:04 after epoch 1 (train 0.0224 / val 0.0212, no collapse); ~37 min/epoch with GPU1 at 2/2 slots vs ~24 min solo; rerun when a GPU is idle |
 | `srp_dnn_s42` | **done 2026-11-13 05:12** | `runs/srp_dnn_s42`; fixed five-block forward, early stopped epoch 95; DICIT F1@10 0.7665, MAE 3.26 |
 | `tf_mamba_512_s42` | **done 2026-11-15 00:40** | `runs/tf_mamba_512_s42`; `tf_mamba_dicit_512.toml` (`n_fft=512`), early stopped epoch 85; DICIT F1@10 0.9294, MAE 1.53 |
+| `ipdnet_s42` | queued 2026-11-16, no result yet | `runs/ipdnet_s42`; port of `FN-SSL@76fcb281`; GPU smoke and checkpoint round-trip passed before submission |
+| `ipdnet2_small_s42` | queued 2026-11-16, no result yet | `runs/ipdnet2_small_s42`; port of `FN-SSL@76fcb281`; GPU smoke (Mamba CUDA path) and checkpoint round-trip passed before submission |
 
 **Early stopping (all rows).** `patience=6` counts validation rounds
 (`eval_every` epochs apart), matching LOCATA's `Trainer`; the package loop had

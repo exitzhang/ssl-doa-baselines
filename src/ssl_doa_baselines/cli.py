@@ -24,10 +24,24 @@ def _parse_channels(text: Optional[str]):
     return [int(v) for v in text.split(",") if v.strip() != ""]
 
 
-def _read_audio(path: str, channels: Optional[List[int]], normalize: bool = True):
+_NEW_MODEL_NAMES = ("ipdnet", "ipdnet2_small")
+
+
+def _expected_sample_rate(model_name: Optional[str]) -> Optional[int]:
+    """Models that resample internally expect a 48 kHz waveform."""
+    return 48000 if str(model_name).lower() in _NEW_MODEL_NAMES else None
+
+
+def _read_audio(path: str, channels: Optional[List[int]], normalize: bool = True,
+                expected_sample_rate: Optional[int] = None):
     import soundfile as sf
 
-    audio, _ = sf.read(path, always_2d=True)          # (T, C)
+    audio, sample_rate = sf.read(path, always_2d=True)  # (T, C)
+    if (expected_sample_rate is not None
+            and int(sample_rate) != int(expected_sample_rate)):
+        raise ValueError(
+            f"{path}: sample rate {sample_rate} Hz, expected "
+            f"{expected_sample_rate} Hz")
     if channels is not None:
         audio = audio[:, channels]
     if normalize and audio.size:
@@ -49,7 +63,10 @@ def cmd_predict(args) -> int:
     cfg = _load_entry_config([args.config, args.data_config])
     model = load_model(args.checkpoint, config=cfg, device=args.device,
                        strict=not args.allow_legacy)
-    audio = _read_audio(args.audio, _parse_channels(args.channels))
+    audio = _read_audio(
+        args.audio, _parse_channels(args.channels),
+        expected_sample_rate=_expected_sample_rate(
+            getattr(model, "model_name", None)))
     decode = dict(cfg.get("decode", {}))
     if args.max_sources is not None:
         decode["max_sources"] = args.max_sources
@@ -75,10 +92,12 @@ class ManifestDataset(torch.utils.data.Dataset):
     """JSONL manifest with ``{"audio": path, "angles": [[az, el], ...]}``."""
 
     def __init__(self, manifest: str, channels: Optional[List[int]] = None,
-                 normalize: bool = True):
+                 normalize: bool = True,
+                 expected_sample_rate: Optional[int] = None):
         self.root = Path(manifest).resolve().parent
         self.channels = channels
         self.normalize = normalize
+        self.expected_sample_rate = expected_sample_rate
         self.entries = []
         with Path(manifest).open() as f:
             for line in f:
@@ -96,7 +115,8 @@ class ManifestDataset(torch.utils.data.Dataset):
         audio_path = Path(entry["audio"])
         if not audio_path.is_absolute():
             audio_path = self.root / audio_path
-        audio = _read_audio(str(audio_path), self.channels, self.normalize)
+        audio = _read_audio(str(audio_path), self.channels, self.normalize,
+                            expected_sample_rate=self.expected_sample_rate)
         angles = np.asarray(entry.get("angles", []), dtype=np.float32).reshape(-1, 2)
         return {"audio": torch.from_numpy(audio), "angles": angles}
 
@@ -118,8 +138,12 @@ def cmd_fit(args) -> int:
     model = build_model(name, mcfg)
 
     channels = _parse_channels(args.channels)
-    train_ds = ManifestDataset(args.manifest, channels)
-    val_ds = ManifestDataset(args.val_manifest, channels) if args.val_manifest else None
+    expected_rate = _expected_sample_rate(name)
+    train_ds = ManifestDataset(args.manifest, channels,
+                               expected_sample_rate=expected_rate)
+    val_ds = (ManifestDataset(args.val_manifest, channels,
+                              expected_sample_rate=expected_rate)
+              if args.val_manifest else None)
     train_cfg = cfg.get("train", {})
     loader = torch.utils.data.DataLoader(
         train_ds, batch_size=int(args.batch_size or train_cfg.get("batch_size", 8)),
@@ -139,6 +163,7 @@ def cmd_fit(args) -> int:
         weight_decay=float(train_cfg.get("weight_decay", 0.01)),
         optimizer=str(train_cfg.get("optimizer", "adamw")),
         scheduler=train_cfg.get("scheduler", "cosine"),
+        scheduler_gamma=float(train_cfg.get("scheduler_gamma", 0.975)),
         eta_min=float(train_cfg.get("eta_min", 1e-6)),
         amp=bool(train_cfg.get("amp", args.device.startswith("cuda"))),
         grad_clip=float(train_cfg.get("grad_clip", 1.0)),
@@ -175,7 +200,9 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--config", required=True)
     f.add_argument("--manifest", required=True)
     f.add_argument("--val-manifest", default=None)
-    f.add_argument("--model", default=None, choices=["tf_mamba", "icocnn", "srp_dnn"])
+    f.add_argument("--model", default=None,
+                   choices=["tf_mamba", "icocnn", "srp_dnn", "ipdnet",
+                            "ipdnet2_small"])
     f.add_argument("--channels", default=None)
     f.add_argument("--output", required=True)
     f.add_argument("--epochs", type=int, default=None)

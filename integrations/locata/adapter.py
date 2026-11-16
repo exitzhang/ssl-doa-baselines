@@ -173,6 +173,75 @@ def build_loader(dataset: Dataset, *, batch_size: int, num_workers: int,
     )
 
 
+def check_audio_contract(data_cfg: Dict[str, Any], *, split: str) -> Dict[str, Any]:
+    """Verify the 48 kHz / 16,000-sample / 3-mic clip contract.
+
+    Simulated splits are checked through ``dataset_meta.json``; DICIT frames
+    are checked from WAV headers (all clips must share the rate and length),
+    and every metadata file must have a WAV.  Called before IPDnet training
+    and DICIT evaluation; header reads are cheap (~1 s for 926 frames).
+    """
+    import soundfile as sf
+
+    target = int(data_cfg.get("target_num_samples", 16000))
+    indices = list(data_cfg.get("mic_indices", [5, 6, 8]))
+
+    if split in ("train", "val"):
+        root = Path(data_cfg[f"{split}_root"])
+        meta_path = root / "dataset_meta.json"
+        if not meta_path.is_file():
+            raise FileNotFoundError(f"{meta_path} not found")
+        meta = json.loads(meta_path.read_text())
+        rate = int(meta.get("fs", 0))
+        if rate != 48000:
+            raise ValueError(f"{root}: fs={rate}, expected 48000")
+        num = int(meta.get("mic_output_num_samples",
+                            meta.get("source_num_samples", target)))
+        if num != target:
+            raise ValueError(
+                f"{root}: mic_output_num_samples={num}, expected {target}")
+        positions = meta.get("mic_pos")
+        if positions is not None and max(indices) >= len(positions):
+            raise ValueError(
+                f"{root}: mic_indices {indices} exceed {len(positions)} mics")
+        return {"root": str(root), "sample_rate": rate, "num_samples": num,
+                "mic_indices": indices, "source_num": meta.get("source_num")}
+
+    if split == "dicit":
+        root = Path(data_cfg["dicit_root"])
+        wavs = sorted((root / "wavs").glob("*.wav"))
+        metas = sorted((root / "metadata").glob("*.json"))
+        if not wavs or not metas:
+            raise FileNotFoundError(f"{root}: missing wavs/ or metadata/")
+        wav_names = {p.stem for p in wavs}
+        meta_names = {p.stem for p in metas}
+        missing = sorted(meta_names - wav_names)
+        if missing:
+            raise FileNotFoundError(
+                f"{root}: {len(missing)} metadata files have no WAV, "
+                f"first: {missing[0]}")
+        rates, lengths, channels = set(), set(), set()
+        for path in wavs:
+            info = sf.info(str(path))
+            rates.add(int(info.samplerate))
+            lengths.add(int(info.frames))
+            channels.add(int(info.channels))
+        if rates != {48000}:
+            raise ValueError(f"{root}: WAV sample rates {sorted(rates)}")
+        if lengths != {target}:
+            raise ValueError(
+                f"{root}: WAV lengths {sorted(lengths)}, expected {target}")
+        if min(channels) <= max(indices):
+            raise ValueError(
+                f"{root}: WAVs have {min(channels)} channels, need "
+                f"index {max(indices)}")
+        return {"root": str(root), "sample_rate": 48000,
+                "num_samples": target, "mic_indices": indices,
+                "frames": len(wavs)}
+
+    raise ValueError(f"Unknown split {split!r}")
+
+
 def build_dicit_loader(root: str, data_cfg: Dict[str, Any], *, batch_size: int,
                        num_workers: int) -> DataLoader:
     sym = locata_symbols()
@@ -312,6 +381,7 @@ def train_native(model, data_cfg, train_cfg, *, out_dir: str, seed: int,
             weight_decay=float(train_cfg.get("weight_decay", 0.01)),
             optimizer=str(train_cfg.get("optimizer", "adamw")),
             scheduler=train_cfg.get("scheduler", "cosine"),
+            scheduler_gamma=float(train_cfg.get("scheduler_gamma", 0.975)),
             eta_min=float(train_cfg.get("eta_min", 1e-6)),
             amp=bool(train_cfg.get("amp", True)),
             grad_clip=float(train_cfg.get("grad_clip", 1.0)),
@@ -451,11 +521,19 @@ def cache_candidates(model, loader, *, device: str, max_sources: int = 3,
     gts: List[List[Tuple[float, float]]] = []
     candidates: List[List[Tuple[float, float, float]]] = []
     elapsed = 0.0
+    template_elapsed = 0.0
     frames = 0
+
+    def _sync(tensor):
+        if tensor.is_cuda:
+            torch.cuda.synchronize(tensor.device)
+
     for audios, labels in loader:
         audios = audios.to(device)
+        _sync(audios)
         t0 = time.time()
         out = model(audios)
+        _sync(audios)
         elapsed += time.time() - t0
         frames += audios.shape[0]
         gts.extend([[tuple(float(x) for x in src) for src in sample] for sample in labels])
@@ -486,12 +564,29 @@ def cache_candidates(model, loader, *, device: str, max_sources: int = 3,
                     (float(vad[b, fi, s]), float(doa[b, fi, 0, s]),
                      float(doa[b, fi, 1, s])) for s in order[:max_sources]
                 ])
+        elif model.model_name in ("ipdnet", "ipdnet2_small"):
+            # The native clip-level DP-IPD is already decoded per track by the
+            # model; time the template matching separately from the forward.
+            score_kind = str(model.config.get("score_kind",
+                                              getattr(model, "score_kind", "ratio")))
+            _sync(audios)
+            t0 = time.time()
+            scores, az, el = model.tracks.decode_candidates(
+                out["ipd"], score_kind=score_kind)
+            _sync(audios)
+            template_elapsed += time.time() - t0
+            for b in range(scores.shape[0]):
+                candidates.append([
+                    (float(scores[b, k]), float(az[b, k]), float(el[b, k]))
+                    for k in range(min(max_sources, scores.shape[1]))
+                ])
         else:
             raise ValueError(f"Unsupported model for candidate caching: {model.model_name}")
 
     return {"kind": "candidates", "frames": len(gts), "gts": gts,
             "candidates": candidates, "elapsed_s": elapsed,
-            "forward_ms_per_frame": 1000.0 * elapsed / max(frames, 1)}
+            "forward_ms_per_frame": 1000.0 * elapsed / max(frames, 1),
+            "template_ms_per_frame": 1000.0 * template_elapsed / max(frames, 1)}
 
 
 def sweep_candidates(cache: Dict[str, Any], thresholds: Sequence[float], *,

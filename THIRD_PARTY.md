@@ -73,6 +73,51 @@ the icosahedral CNN code is AGPL-3.0.
   loss), clip-level spectrum readout.
 - The model requires `mamba-ssm==2.1.0` and a CUDA build.
 
+## IPDnet / IPDnet2-Small
+
+- Upstream: <https://github.com/Audio-WestlakeU/FN-SSL>
+- Commit used: `76fcb281be92caf068c712dfb015e354f437260f` (2026-11-16 fetch)
+- License: the root `README.md` marks the project **MIT**.  That commit has no
+  standalone root `LICENSE` file; the vendored `retention.py` retains its
+  Microsoft / Westlake MIT headers.  The port keeps the applicable copyright
+  and licence notices in the files below.
+- Papers:
+  - IPDnet: <https://arxiv.org/html/2405.07021>
+  - IPDnet2: <https://arxiv.org/html/2509.21900v1>
+- Ported files:
+  - `src/ssl_doa_baselines/ipdnet/backbone.py` ←
+    `IPDnet/FixedAarryIPDnet.py` (`FNblock`, `CausCnnBlock`, `IPDnet`);
+  - `src/ssl_doa_baselines/ipdnet/model.py`, `dpipd_frontend.py`,
+    `dpipd_tracks.py` ← the front end, target construction and PIT in
+    `IPDnet/runIPDnetOn.py`;
+  - `src/ssl_doa_baselines/ipdnet2/backbone.py` ← `IPDnet2/IPDnet2.py`
+    (`FreqInverse`, `CausalConv1d`, `SpatialNetLayer`, `OnlineSpatialNet`);
+  - `src/ssl_doa_baselines/ipdnet2/model.py` ← the Small configuration in
+    `IPDnet2/run_IPDnet2.py`;
+  - `src/ssl_doa_baselines/ipdnet2/arch/base/linear_group.py`,
+    `non_linear.py`, `norm.py`, `retention.py` ← the files of the same names
+    under `IPDnet2/arch/base/` (vendored verbatim);
+  - `dpipd_tracks.py` reimplements the far-field `DPIPD` template and the
+    per-track decode in `IPDnet2/Module.py`.
+- Changes:
+  - fixed 3-microphone, 3-track configuration (`input_size=6`,
+    `dim_output=12`, `max_track=3`);
+  - the authors' partially hard-coded `reshape`/`permute` is written with
+    explicit real/imaginary, frequency, microphone-pair and track axes, giving
+    `(B, T_out, 2F, P, K)` with every real part before every imaginary part;
+  - both backbones preserve the last partially filled time-pooling group
+    (`ceil_mode=True`), so a 20- (IPDnet) or 17-frame (IPDnet2) clip yields 2
+    or 4 pooled steps;
+  - the front end is shared: a 48 kHz -> 16 kHz anti-aliasing resampler,
+    512-point Hann window / FFT, `center=False` with right-hand zero padding,
+    and FP32 forgetting-magnitude normalisation;
+  - activity decoding is per track: projection ratio for IPDnet, negative
+    template MSE for IPDnet2 (so a shared `score >= threshold` sweep works);
+  - relative imports and a clear Mamba dependency error; the per-layer shape
+    `print` is removed.
+- Unlike the paper's native DICIT recordings, this integration trains and
+  evaluates on the repository's frozen 16,000-sample DICIT frame protocol.
+
 ## LOCATA / DICIT components used by the adapter (not vendored)
 
 `integrations/locata/adapter.py` imports, at runtime and from an explicit

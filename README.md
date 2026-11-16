@@ -8,6 +8,8 @@ a thin LOCATA adapter that reuses LOCATA's own datasets, trainer and scorer.
 | `tf_mamba` | TF-Mamba (bidirectional temporal / frequency Mamba) | azimuth spectrum `(B, 181)` | shared peak decoder |
 | `icocnn` | multi-source IcoCNN (spherical SRP-PHAT + icosahedral CNN) | ACCDOA slots `(B, T, 10, 3)` | activity threshold, top-3 |
 | `srp_dnn` | SRP-DNN (causal CRNN + mixed DP-IPD) | mixed DP-IPD `(B, T, 2F, P)` | iterative detection & localization |
+| `ipdnet` | IPDnet (fixed 3-mic full/narrow-band LSTM + causal CNN) | per-track DP-IPD `(B, 2F, P, K)` | projection-ratio threshold |
+| `ipdnet2_small` | IPDnet2-Small (fixed 3-mic online spatial network, Mamba) | per-track DP-IPD `(B, 2F, P, K)` | negative-MSE threshold |
 
 The package itself never imports LOCATA.  `integrations/locata/` is the only
 boundary and is loaded only by the external runner.
@@ -20,8 +22,19 @@ pip install -e ".[all]"                   # numpy/scipy/soundfile/tomli + einops
 pip install mamba-ssm==2.1.0 --no-build-isolation   # if not already present
 ```
 
-`mamba-ssm` is only needed for `tf_mamba`; it requires a CUDA build.  The other
-two models run on CPU (slowly) or GPU.
+`mamba-ssm` is needed for `tf_mamba` and `ipdnet2_small`; it requires a CUDA
+build.  `ipdnet` and `ipdnet2_small` additionally need `torchaudio`
+(`pip install -e ".[ipdnet]"` / `".[ipdnet2]"`); the other models run on CPU
+(slowly) or GPU.  The combination verified here is torch 2.2.1 /
+torchaudio 2.2.1 / CUDA 11.8.
+
+The two IPDnet ports share a 48 kHz -> 16 kHz resampler, 512-point Hann/FFT
+front end (`center=False`, explicit right pad), per-track DP-IPD targets with
+`J0` empty tracks and clip-level PIT.  IPDnet uses hop 256 (20 STFT frames,
+2 pooled steps); IPDnet2-Small uses hop 320 (17 frames, 4 pooled steps).
+Decoding returns one detection per active track: IPDnet scores by the
+projection ratio, IPDnet2-Small by the negative template MSE (so the same
+`score >= threshold` sweep applies; `-0.4` means `MSE <= 0.4`).
 
 ## Package API
 
@@ -161,7 +174,24 @@ GPU_QUEUE_CONFIG=/path/to/Record/queue/gpu-queue.config.json \
 python -m gpu_queue submit /path/to/Record/queue/state jobs.json
 ```
 
-Submit `icocnn_multi_s42` and `srp_dnn_s42` the same way with their configs.
+Submit `icocnn_multi_s42`, `srp_dnn_s42`, `ipdnet_s42` and
+`ipdnet2_small_s42` the same way with their configs.  The two IPDnet manifests
+are `queue/ipdnet_512_s42.json` and `queue/ipdnet2_small_512_s42.json`.
+
+Both IPDnet jobs run from a dedicated detached worktree,
+`/home/t-zhangchaoqin/projects/ssl/wt/ssl-doa-baselines-ipdnet`, pinned at the
+integration merge commit, so code cannot change under a running job.  The
+machine-local, git-ignored `data_local.toml` and the artifact root are passed
+by absolute path into the main checkout; `runs/ipdnet_s42` and
+`runs/ipdnet2_small_s42` therefore stay in the indexed checkout.
+
+### IPDnet provenance
+
+Both ports are fixed-array adaptations of
+`Audio-WestlakeU/FN-SSL@76fcb281` (MIT; see `THIRD_PARTY.md`).  They train
+from random initialisation on the shared LOCATA protocol; the authors'
+paper-level results, native arrays and frame-level outputs are not reproduced
+here.
 
 ### Shared training budget
 
@@ -179,9 +209,12 @@ comparison budget.  The effective epoch count and budget are recorded in each
 ```
 src/ssl_doa_baselines/
   api.py config.py geometry.py training.py cli.py
+  dpipd_frontend.py dpipd_tracks.py     shared IPDnet front end / targets / decode
   tf_mamba/  model.py decode.py
   icocnn/    model.py srp.py grid.py conv.py accdoa.py
   srp_dnn/   model.py stft.py dpipd.py idl.py
+  ipdnet/    model.py backbone.py
+  ipdnet2/   model.py backbone.py arch/base/
 integrations/locata/
   adapter.py            data / labels / training / scoring bridge
   run.py                smoke | train | eval
@@ -195,10 +228,11 @@ aborted/                artifacts of aborted attempts (git-ignored)
 
 ## Status
 
-Smoke tests (GPU forward, native decode, checkpoint reload) pass for all three
-models; the 28-case CPU unit suite covers shapes, PIT invariance, IDL on ideal
-DP-IPD, label conversion, SRP steering, the five-block CRNN forward and the
-import boundary.
+Smoke tests (GPU forward, native decode, checkpoint reload) pass for all five
+models, including the IPDnet2-Small Mamba path.  The unit suite covers shapes,
+PIT invariance, IDL on ideal DP-IPD, label conversion, SRP steering, the
+five-block CRNN forward, the import boundary, the shared IPDnet front end
+(resampling, frame counts, phase sign) and per-track targets/decoding.
 
 On 2026-11-10 the three formal jobs (TF-Mamba `_dev`, IcoCNN `_dev`, SRP-DNN
 `_dev`) were submitted to `gpu_queue` with the shared 15-epoch budget and

@@ -61,7 +61,7 @@ def _run_epoch(model, loader, device, optimizer=None, amp=False, grad_clip=1.0,
 def fit(model: torch.nn.Module, train_loader, val_loader=None, *,
         epochs: int = 100, device: str = "cuda", lr: float = 1e-4,
         weight_decay: float = 0.01, optimizer: str = "adamw",
-        scheduler: Optional[str] = "cosine",
+        scheduler: Optional[str] = "cosine", scheduler_gamma: float = 0.975,
         eta_min: float = 1e-6, amp: bool = False, grad_clip: float = 1.0,
         save_dir: Optional[str] = None, eval_every: int = 1,
         patience: Optional[int] = None, config: Optional[Dict[str, Any]] = None,
@@ -84,11 +84,16 @@ def fit(model: torch.nn.Module, train_loader, val_loader=None, *,
     else:
         raise ValueError(f"Unsupported optimizer {optimizer!r}")
     optimizer = opt
-    if scheduler == "cosine":
+    sched_name = None if scheduler is None else str(scheduler).lower()
+    if sched_name == "cosine":
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=max(epochs, 1), eta_min=eta_min
         )
-    elif scheduler in (None, "none"):
+    elif sched_name == "exponential":
+        sched = torch.optim.lr_scheduler.ExponentialLR(
+            optimizer, gamma=float(scheduler_gamma)
+        )
+    elif sched_name in (None, "none"):
         sched = None
     else:
         raise ValueError(f"Unsupported scheduler {scheduler!r}")
