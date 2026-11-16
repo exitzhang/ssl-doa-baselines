@@ -12,6 +12,7 @@ The models deliberately differ in their native output:
 ``{"azimuth_deg", "elevation_deg"?, "score"}`` detections.
 """
 
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -160,6 +161,69 @@ def load_model(checkpoint: str, *, config: Optional[Dict[str, Any]] = None,
     return model
 
 
+def _ipd_score_kind(model: torch.nn.Module) -> str:
+    """The active-track score kind of an IPDnet-family model."""
+    value = getattr(model, "score_kind", None)
+    if value is None:
+        value = dict(getattr(model, "config", {}) or {}).get("score_kind")
+    if value is None:
+        raise ValueError(
+            f"{model_name_of(model)} has no score_kind; expected ratio "
+            "(IPDnet) or neg_mse (IPDnet2-Small)")
+    return str(value).lower()
+
+
+def _require_track_threshold(model: torch.nn.Module,
+                             decode: Dict[str, Any]) -> float:
+    """Validate an explicit, finite absolute threshold before any forward."""
+    name = model_name_of(model)
+    expected = _ipd_score_kind(model)
+    given = decode.get("score_kind")
+    if given is not None and str(given).lower() != expected:
+        raise ValueError(
+            f"{name}.predict() scores tracks by {expected!r}; "
+            f"decode['score_kind']={given!r} does not match the model")
+    if "threshold_abs" not in decode or decode["threshold_abs"] is None:
+        raise ValueError(
+            f"{name}.predict() requires an explicit decode['threshold_abs']: "
+            f"tracks are kept when the {expected} score is >= the threshold. "
+            "Use the validation-locked value, e.g. "
+            "validation.json['locked']['threshold'] (for IPDnet2-Small "
+            "-0.4 means MSE <= 0.4), or pass the value explicitly. "
+            "predict_native() returns tracks without thresholding.")
+    try:
+        threshold = float(decode["threshold_abs"])
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{name}.predict() decode['threshold_abs'] must be a number, got "
+            f"{decode['threshold_abs']!r}")
+    if not math.isfinite(threshold):
+        raise ValueError(
+            f"{name}.predict() decode['threshold_abs'] must be finite, got "
+            f"{threshold!r}")
+    return threshold
+
+
+def _filter_track_candidates(scores, azimuth, elevation, *, threshold: float,
+                             max_sources: int) -> List[List[Dict[str, float]]]:
+    """Per-clip detections, keeping ``score >= threshold`` (sweep parity)."""
+    detections: List[List[Dict[str, float]]] = []
+    for b in range(scores.shape[0]):
+        row: List[Dict[str, float]] = []
+        for k in range(scores.shape[1]):
+            if float(scores[b, k]) < float(threshold):
+                continue
+            row.append({
+                "azimuth_deg": float(azimuth[b, k]),
+                "elevation_deg": float(elevation[b, k]),
+                "score": float(scores[b, k]),
+            })
+            if len(row) >= int(max_sources):
+                break
+        detections.append(row)
+    return detections
+
+
 def _as_batch(waveform) -> torch.Tensor:
     if isinstance(waveform, np.ndarray):
         waveform = torch.from_numpy(waveform)
@@ -218,29 +282,18 @@ def predict(model: torch.nn.Module, waveform, *, decode: Optional[Dict[str, Any]
         )
 
     if name in {"ipdnet", "ipdnet2_small"}:
+        # Validate the operating point *before* the model forward so a missing
+        # threshold cannot silently fall back to 0 and turn empty tracks on.
+        score_kind = _ipd_score_kind(model)
+        threshold = _require_track_threshold(model, decode)
         out = model(x)
         ipd = out["ipd"]
-        score_kind = str(decode.get("score_kind",
-                                    getattr(model, "score_kind", "ratio")))
-        threshold = float(decode.get("threshold_abs", 0.0))
         max_sources = int(decode.get("max_sources", ipd.shape[-1]))
         scores, azimuth, elevation = model.tracks.decode_candidates(
             ipd, score_kind=score_kind)
-        detections: List[List[Dict[str, float]]] = []
-        for b in range(scores.shape[0]):
-            row: List[Dict[str, float]] = []
-            for k in range(scores.shape[1]):
-                if float(scores[b, k]) < threshold:
-                    continue
-                row.append({
-                    "azimuth_deg": float(azimuth[b, k]),
-                    "elevation_deg": float(elevation[b, k]),
-                    "score": float(scores[b, k]),
-                })
-                if len(row) >= max_sources:
-                    break
-            detections.append(row)
-        return detections
+        return _filter_track_candidates(
+            scores, azimuth, elevation, threshold=threshold,
+            max_sources=max_sources)
 
     raise ValueError(f"Unknown model {name!r}")
 
