@@ -31,6 +31,236 @@ from ssl_doa_baselines.training import fit
 
 AZ_RANGE = (0.0, 180.0)
 ANGLE_KEYS = ("azimuth_deg", "elevation_deg")
+DEFAULT_MIC_INDICES = (5, 6, 8)
+ARRAY_ATOL = 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Fixed-array data contract
+# ---------------------------------------------------------------------------
+
+def resolve_mic_indices(data_cfg: Dict[str, Any], *,
+                        n_mics: Optional[int] = None) -> List[int]:
+    """Validate the raw ``mic_indices`` that will be passed to the dataset.
+
+    Checks the count (against ``n_mics`` when known), non-negativity and
+    distinctness.  Bounds are split-specific and are checked where the
+    geometry/metadata is available.  The order is preserved: it is the channel
+    order of the fixed array, not a set.
+    """
+    raw = data_cfg.get("mic_indices", list(DEFAULT_MIC_INDICES))
+    if isinstance(raw, (str, bytes)) or isinstance(raw, (int, np.integer)):
+        raise TypeError(f"[data].mic_indices must be a list of integers, got {raw!r}")
+    try:
+        values = list(raw)
+    except TypeError:
+        raise TypeError(f"[data].mic_indices must be a list of integers, got {raw!r}")
+    indices: List[int] = []
+    for value in values:
+        if isinstance(value, (bool, np.bool_)) or not isinstance(
+                value, (int, np.integer)):
+            raise TypeError(
+                f"[data].mic_indices must contain integers, got {value!r}")
+        indices.append(int(value))
+    if not indices:
+        raise ValueError("[data].mic_indices is empty")
+    if n_mics is not None and len(indices) != int(n_mics):
+        raise ValueError(
+            f"[data].mic_indices {indices} selects {len(indices)} channels, "
+            f"the model expects {int(n_mics)}")
+    if any(index < 0 for index in indices):
+        raise ValueError(f"[data].mic_indices {indices} has a negative index")
+    if len(set(indices)) != len(indices):
+        raise ValueError(f"[data].mic_indices {indices} repeats a channel")
+    return indices
+
+
+def load_mic_positions(source: str) -> np.ndarray:
+    """Read ``mic_pos`` from a ``dataset_meta.json`` file or its directory."""
+    path = Path(source)
+    if path.is_dir():
+        path = path / "dataset_meta.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"{path} not found (needed for array geometry)")
+    meta = json.loads(path.read_text())
+    positions = meta.get("mic_pos")
+    if positions is None:
+        raise ValueError(f"{path}: no 'mic_pos' entry")
+    arr = np.asarray(positions, dtype=np.float64)
+    if arr.ndim != 2 or arr.shape[1] != 3:
+        raise ValueError(f"{path}: mic_pos must be (C, 3), got {arr.shape}")
+    return arr
+
+
+def selected_positions(data_cfg: Dict[str, Any],
+                       split: str) -> Tuple[str, np.ndarray, List[int]]:
+    """Geometry source label, full positions and validated indices for a split.
+
+    Simulated train/val use ``<root>/dataset_meta.json``.  DICIT carries no
+    coordinates, so it falls back to the configured training geometry
+    (``[data].mic_positions_source``, or an explicit ``[data].mic_positions``).
+    """
+    indices = resolve_mic_indices(data_cfg)
+    if split in ("train", "val"):
+        root = Path(data_cfg[f"{split}_root"])
+        source = str(root / "dataset_meta.json")
+        positions = load_mic_positions(source)
+    else:
+        if data_cfg.get("mic_positions") is not None:
+            source = "data.mic_positions"
+            positions = np.asarray(data_cfg["mic_positions"], dtype=np.float64)
+        elif data_cfg.get("mic_positions_source"):
+            source = str(data_cfg["mic_positions_source"])
+            positions = load_mic_positions(source)
+        else:
+            raise ValueError(
+                "DICIT evaluation needs [data].mic_positions or "
+                "[data].mic_positions_source for the array geometry")
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError(f"{source}: positions must be (C, 3), got {positions.shape}")
+    if max(indices) >= len(positions):
+        raise ValueError(
+            f"{source}: mic_indices {indices} exceed {len(positions)} mics")
+    return source, positions, indices
+
+
+def array_pair_vectors(positions, ref_mic: int = 0) -> np.ndarray:
+    """Reference-mic-relative pair vectors ``(P, 3)``, translation invariant.
+
+    The direction matters: ``[5, 6, 8]`` and ``[8, 6, 5]`` produce opposite
+    vectors, while shifting the whole array leaves these differences intact.
+    """
+    mic = np.asarray(positions, dtype=np.float64)
+    if mic.ndim != 2 or mic.shape[1] != 3:
+        raise ValueError(f"positions must be (C, 3), got {mic.shape}")
+    if mic.shape[0] < 2:
+        raise ValueError("a fixed array needs at least two microphones")
+    ref = int(ref_mic)
+    if not 0 <= ref < mic.shape[0]:
+        raise ValueError(f"ref_mic={ref} out of range for {mic.shape[0]} mics")
+    return np.stack([mic[j] - mic[ref] for j in range(mic.shape[0]) if j != ref])
+
+
+def _compare_pair_vectors(expected: np.ndarray, got: np.ndarray) -> bool:
+    return bool(np.allclose(expected, got, rtol=0.0, atol=ARRAY_ATOL))
+
+
+def _model_array(model) -> Tuple[np.ndarray, int, int]:
+    config = dict(getattr(model, "config", {}) or {})
+    positions = config.get("mic_positions")
+    if positions is None:
+        raise ValueError(
+            f"{getattr(model, 'model_name', model.__class__.__name__)} has no "
+            "mic_positions in its model config; the array cannot be verified")
+    arr = np.asarray(positions, dtype=np.float64)
+    n_mics = int(config.get("n_mics", arr.shape[0] if arr.ndim == 2 else 0))
+    ref_mic = int(config.get("ref_mic", 0))
+    return arr, n_mics, ref_mic
+
+
+def check_fixed_array(model, data_cfg: Dict[str, Any], *,
+                      splits: Tuple[str, ...] = ("train", "val")) -> Dict[str, Any]:
+    """Compare the model's reference-pair geometry with one or more splits.
+
+    Called before optimization.  Translation of the whole array is allowed;
+    a permuted channel order or a changed microphone spacing is rejected.
+    """
+    positions, n_mics, ref_mic = _model_array(model)
+    indices = resolve_mic_indices(data_cfg, n_mics=n_mics)
+    expected = array_pair_vectors(positions, ref_mic)
+    record: Dict[str, Any] = {
+        "n_mics": n_mics,
+        "mic_indices": indices,
+        "mic_positions": positions.tolist(),
+        "ref_mic": ref_mic,
+        "splits": {},
+    }
+    for split in splits:
+        source, dataset_positions, _ = selected_positions(data_cfg, split)
+        selected = dataset_positions[indices]
+        got = array_pair_vectors(selected, ref_mic)
+        if not _compare_pair_vectors(expected, got):
+            raise ValueError(
+                f"{split} array ({source}) does not match the model's fixed "
+                f"array (ref_mic={ref_mic}, mic_indices={indices}): "
+                f"reference pair vectors differ. Use the training channel "
+                f"order and geometry; expected {expected.tolist()}, got "
+                f"{got.tolist()}")
+        record["splits"][split] = {
+            "source": source, "mic_positions": selected.tolist()}
+    return record
+
+
+def check_eval_array(model, checkpoint_config: Dict[str, Any],
+                     data_cfg: Dict[str, Any], *, split: str) -> Dict[str, Any]:
+    """Verify the checkpoint's channel order and paired geometry for a split.
+
+    The checkpoint records ``mic_indices`` / ``mic_positions`` / ``ref_mic`` in
+    ``config['data']``.  A reversed or permuted loader order is rejected even
+    when the geometry source is the same.
+    """
+    positions, n_mics, ref_mic = _model_array(model)
+    loader_indices = resolve_mic_indices(data_cfg, n_mics=n_mics)
+    recorded = dict(checkpoint_config or {}).get("data") or {}
+    ckpt_indices = recorded.get("mic_indices")
+    if ckpt_indices is None:
+        raise ValueError(
+            "checkpoint has no config['data']['mic_indices']; the channel "
+            "order cannot be verified. Re-export the checkpoint from a run "
+            "that recorded the fixed array, or retrain with the current "
+            "train path.")
+    ckpt_indices = [int(value) for value in ckpt_indices]
+    if ckpt_indices != loader_indices:
+        raise ValueError(
+            f"channel order mismatch: checkpoint {ckpt_indices} vs loader "
+            f"{loader_indices}. Evaluate with the training microphone order "
+            "from the data config.")
+    ckpt_positions = recorded.get("mic_positions")
+    if ckpt_positions is not None:
+        ckpt_positions = np.asarray(ckpt_positions, dtype=np.float64)
+        if not _compare_pair_vectors(array_pair_vectors(positions, ref_mic),
+                                     array_pair_vectors(ckpt_positions, ref_mic)):
+            raise ValueError(
+                "checkpoint records a different mic geometry than its own "
+                "model_config; the checkpoint is inconsistent")
+    source, dataset_positions, _ = selected_positions(data_cfg, split)
+    selected = dataset_positions[loader_indices]
+    expected = array_pair_vectors(positions, ref_mic)
+    got = array_pair_vectors(selected, ref_mic)
+    if not _compare_pair_vectors(expected, got):
+        raise ValueError(
+            f"{split} array ({source}) does not match the checkpoint geometry: "
+            f"reference pair vectors differ (expected {expected.tolist()}, got "
+            f"{got.tolist()}). Check mic_positions_source and mic_indices.")
+    return {
+        "n_mics": n_mics,
+        "mic_indices": loader_indices,
+        "mic_positions": positions.tolist(),
+        "ref_mic": ref_mic,
+        "geometry_source": source,
+        "dataset_mic_positions": selected.tolist(),
+        "geometry_matches": True,
+    }
+
+
+def model_n_mics(model) -> Optional[int]:
+    """Configured microphone count, if the model exposes one."""
+    config = dict(getattr(model, "config", {}) or {})
+    for key in ("n_mics", "num_mics"):
+        if key in config:
+            return int(config[key])
+    return None
+
+
+def attach_array_record(data_cfg: Dict[str, Any],
+                        record: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy a data config with the resolved array written into it."""
+    data = dict(data_cfg)
+    data["mic_indices"] = [int(v) for v in record["mic_indices"]]
+    data["mic_positions"] = [[float(x) for x in row]
+                             for row in record["mic_positions"]]
+    data["ref_mic"] = int(record["ref_mic"])
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -122,14 +352,15 @@ def _noise_kwargs(data_cfg: Dict[str, Any], use_val: bool) -> Dict[str, Any]:
 
 
 def build_angle_dataset(root: str, data_cfg: Dict[str, Any], *,
-                        use_val: bool = False) -> Dataset:
+                        use_val: bool = False,
+                        n_mics: Optional[int] = None) -> Dataset:
     sym = locata_symbols()
     base = sym["AudioDataset"](
         root_dir=root,
         split="all",
         label_mode="angle",
         use_aug=False if use_val else bool(data_cfg.get("use_aug", True)),
-        mic_indices=list(data_cfg.get("mic_indices", [5, 6, 8])),
+        mic_indices=resolve_mic_indices(data_cfg, n_mics=n_mics),
         normalize=True,
         **_noise_kwargs(data_cfg, use_val),
     )
@@ -137,7 +368,8 @@ def build_angle_dataset(root: str, data_cfg: Dict[str, Any], *,
 
 
 def build_heatmap_dataset(root: str, data_cfg: Dict[str, Any], *,
-                          use_val: bool = False) -> Dataset:
+                          use_val: bool = False,
+                          n_mics: Optional[int] = None) -> Dataset:
     sym = locata_symbols()
     creator = sym["heatmap_creator"](
         az_range_deg=AZ_RANGE,
@@ -150,7 +382,7 @@ def build_heatmap_dataset(root: str, data_cfg: Dict[str, Any], *,
         label_mode="heatmap_1d",
         heatmap_creator=creator,
         use_aug=False if use_val else bool(data_cfg.get("use_aug", True)),
-        mic_indices=list(data_cfg.get("mic_indices", [5, 6, 8])),
+        mic_indices=resolve_mic_indices(data_cfg, n_mics=n_mics),
         normalize=True,
         **_noise_kwargs(data_cfg, use_val),
     )
@@ -184,7 +416,7 @@ def check_audio_contract(data_cfg: Dict[str, Any], *, split: str) -> Dict[str, A
     import soundfile as sf
 
     target = int(data_cfg.get("target_num_samples", 16000))
-    indices = list(data_cfg.get("mic_indices", [5, 6, 8]))
+    indices = resolve_mic_indices(data_cfg)
 
     if split in ("train", "val"):
         root = Path(data_cfg[f"{split}_root"])
@@ -243,7 +475,8 @@ def check_audio_contract(data_cfg: Dict[str, Any], *, split: str) -> Dict[str, A
 
 
 def build_dicit_loader(root: str, data_cfg: Dict[str, Any], *, batch_size: int,
-                       num_workers: int) -> DataLoader:
+                       num_workers: int,
+                       n_mics: Optional[int] = None) -> DataLoader:
     sym = locata_symbols()
     ds = sym["create_locata_dataset"](
         root_dir=root,
@@ -252,7 +485,7 @@ def build_dicit_loader(root: str, data_cfg: Dict[str, Any], *, batch_size: int,
         max_sources=int(data_cfg.get("max_sources", 3)),
         normalize=True,
         target_num_samples=int(data_cfg.get("target_num_samples", 16000)),
-        mic_indices=list(data_cfg.get("mic_indices", [5, 6, 8])),
+        mic_indices=resolve_mic_indices(data_cfg, n_mics=n_mics),
     )
     return build_loader(ds, batch_size=batch_size, num_workers=num_workers,
                         shuffle=False, collate=sym["angle_collate"])
@@ -298,8 +531,11 @@ def train_tf_mamba(model, data_cfg, train_cfg, *, device_index: int,
     batch_size = int(train_cfg.get("batch_size", 16))
     workers = int(train_cfg.get("num_workers", 8))
 
-    train_ds = build_heatmap_dataset(data_cfg["train_root"], data_cfg, use_val=False)
-    val_ds = build_heatmap_dataset(data_cfg["val_root"], data_cfg, use_val=True)
+    n_mics = model_n_mics(model)
+    train_ds = build_heatmap_dataset(data_cfg["train_root"], data_cfg,
+                                     use_val=False, n_mics=n_mics)
+    val_ds = build_heatmap_dataset(data_cfg["val_root"], data_cfg,
+                                   use_val=True, n_mics=n_mics)
     train_loader = build_loader(train_ds, batch_size=batch_size, num_workers=workers,
                                 shuffle=True, drop_last=True, collate=False)
     val_loader = build_loader(val_ds, batch_size=batch_size, num_workers=workers,
@@ -358,8 +594,11 @@ def train_native(model, data_cfg, train_cfg, *, out_dir: str, seed: int,
     ``<out_dir>/train.log`` in addition to stdout (which gpu_queue keeps in
     ``Record/queue/state/jobs/<job>/command.log``).
     """
-    train_ds = build_angle_dataset(data_cfg["train_root"], data_cfg, use_val=False)
-    val_ds = build_angle_dataset(data_cfg["val_root"], data_cfg, use_val=True)
+    n_mics = model_n_mics(model)
+    train_ds = build_angle_dataset(data_cfg["train_root"], data_cfg,
+                                   use_val=False, n_mics=n_mics)
+    val_ds = build_angle_dataset(data_cfg["val_root"], data_cfg,
+                                 use_val=True, n_mics=n_mics)
     batch_size = int(train_cfg.get("batch_size", 8))
     workers = int(train_cfg.get("num_workers", 8))
     train_loader = build_loader(train_ds, batch_size=batch_size, num_workers=workers,
@@ -451,6 +690,116 @@ def interpolate_at_far(metrics_by_key: Dict[str, dict], far_target: float = 0.03
     return {"far_target": far_target, "covered": False,
             "FAR_min": pts[0]["FAR"] if pts else None,
             "FAR_max": pts[-1]["FAR"] if pts else None}
+
+
+def count_parameters(model) -> int:
+    """Parameter count of the actually rebuilt model."""
+    return int(sum(p.numel() for p in model.parameters()))
+
+
+def _silence_max_thresh(decode_cfg: Dict[str, Any], split: str) -> float:
+    key = "silence_max_thresh_val" if split == "val" else "silence_max_thresh_dicit"
+    return float(decode_cfg.get(key, 0.0 if split == "val" else 0.1))
+
+
+def collect_audio_batches(loader, device: str) -> List[torch.Tensor]:
+    """Materialise the loader's waveforms on the device, outside the timer."""
+    batches: List[torch.Tensor] = []
+    for audios, _labels in loader:
+        batches.append(audios.to(device))
+    return batches
+
+
+@torch.no_grad()
+def inference_detections(model, audios: torch.Tensor, *,
+                         decode_cfg: Dict[str, Any], split: str,
+                         threshold: float):
+    """One method's full inference + decode at ``threshold`` for a batch.
+
+    This is the timed unit: front end, backbone, the method's own template
+    matching / peak decoder and the final score filter.  Public scoring is
+    outside; ``threshold`` is a ratio for TF-Mamba and an absolute score for
+    the candidate-path models.
+    """
+    name = model.model_name
+    max_sources = int(decode_cfg.get("max_sources", 3))
+    if name == "tf_mamba":
+        from engine import decode_at_ratio
+
+        spectrum = model(audios).detach().cpu().numpy().astype(np.float32)
+        return decode_at_ratio(
+            spectrum, float(threshold), max_sources=max_sources,
+            silence_max_thresh=_silence_max_thresh(decode_cfg, split))
+    if name in ("icocnn", "srp_dnn"):
+        return model.decode(
+            audios, threshold_abs=float(threshold), max_sources=max_sources,
+            frame_index=int(decode_cfg.get("frame_index", -1)))
+    if name in ("ipdnet", "ipdnet2_small"):
+        score_kind = str(decode_cfg.get(
+            "score_kind", getattr(model, "score_kind", "ratio")))
+        out = model(audios)
+        scores, azimuth, elevation = model.tracks.decode_candidates(
+            out["ipd"], score_kind=score_kind)
+        detections = []
+        for b in range(scores.shape[0]):
+            row = []
+            for k in range(scores.shape[1]):
+                if float(scores[b, k]) < float(threshold):
+                    continue
+                row.append((float(azimuth[b, k]), float(elevation[b, k])))
+                if len(row) >= max_sources:
+                    break
+            detections.append(row)
+        return detections
+    raise ValueError(f"Unsupported model for inference timing: {name}")
+
+
+def _sync_device(model) -> None:
+    if torch.cuda.is_available():
+        device = next(model.parameters()).device
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+
+
+def benchmark_inference(model, batches: List[torch.Tensor], *,
+                        decode_cfg: Dict[str, Any], split: str,
+                        threshold: float, warmup_batches: int = 1,
+                        repeats: int = 1) -> Dict[str, Any]:
+    """End-to-end per-clip inference time, normalised by actual clip count.
+
+    The waveform is already on the device (``collect_audio_batches``); timing
+    runs warm-up batches untimed, then ``repeats`` passes over the same
+    batches with a device sync around each batch.  The denominator is the
+    accumulated clip count, so a short final batch is counted correctly.
+    """
+    if not batches:
+        raise ValueError("benchmark_inference needs at least one batch")
+    model.eval()
+    warmup = max(0, min(int(warmup_batches), len(batches)))
+    with torch.no_grad():
+        for index in range(warmup):
+            inference_detections(model, batches[index], decode_cfg=decode_cfg,
+                                 split=split, threshold=threshold)
+        _sync_device(model)
+        clips = 0
+        elapsed = 0.0
+        for _ in range(max(1, int(repeats))):
+            for audios in batches:
+                clips += int(audios.shape[0])
+                _sync_device(model)
+                start = time.perf_counter()
+                inference_detections(model, audios, decode_cfg=decode_cfg,
+                                     split=split, threshold=threshold)
+                _sync_device(model)
+                elapsed += time.perf_counter() - start
+    return {
+        "inference_ms_per_clip": 1000.0 * elapsed / max(clips, 1),
+        "inference_clips": clips,
+        "inference_batches": len(batches),
+        "inference_warmup_batches": warmup,
+        "inference_repeats": max(1, int(repeats)),
+        "inference_elapsed_s": elapsed,
+    }
 
 
 def score_by_source_count(gts, pred_all, *, acc_thresholds=(5, 10, 15)) -> Dict[str, dict]:
