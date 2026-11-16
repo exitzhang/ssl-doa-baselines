@@ -223,7 +223,10 @@ def cmd_train(args) -> int:
         for split in ("train", "val"):
             print(f"[train] {split} data contract: "
                   f"{adapter.check_audio_contract(data_cfg, split=split)}")
-        array_record = adapter.check_fixed_array(model, data_cfg)
+        try:
+            array_record = adapter.check_fixed_array(model, data_cfg)
+        except (ValueError, FileNotFoundError) as exc:
+            raise SystemExit(f"[train] {exc}")
         print(f"[train] fixed array mic_indices={array_record['mic_indices']} "
               f"ref_mic={array_record['ref_mic']} matches train/val geometry")
         data_cfg = adapter.attach_array_record(data_cfg, array_record)
@@ -576,8 +579,11 @@ def cmd_eval(args) -> int:
     if native_tracks:
         print(f"[eval] {split} data contract: "
               f"{adapter.check_audio_contract(_data_cfg(cfg), split=split)}")
-        array_contract = adapter.check_eval_array(
-            model, meta.get("config") or {}, _data_cfg(cfg), split=split)
+        try:
+            array_contract = adapter.check_eval_array(
+                model, meta.get("config") or {}, _data_cfg(cfg), split=split)
+        except (ValueError, FileNotFoundError) as exc:
+            raise SystemExit(f"[eval] {exc}")
         print(f"[eval] array contract: mic_indices="
               f"{array_contract['mic_indices']} geometry="
               f"{array_contract['geometry_source']}")
