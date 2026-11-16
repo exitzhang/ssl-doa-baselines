@@ -1,7 +1,7 @@
 {
   "jobs": [
     {
-      "id": "ipdnet2_small_s42",
+      "id": "ipdnet2_small_s42_v2",
       "cwd": "/home/t-zhangchaoqin/projects/ssl/wt/ssl-doa-baselines-ipdnet",
       "argv": [
         "/home/t-zhangchaoqin/.conda/envs/locata/bin/python",

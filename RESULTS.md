@@ -149,8 +149,10 @@ cited as results.
 | `icocnn_multi_s42_v5c` | paused — training too slow on a shared GPU; no result | `aborted/icocnn_slow_20261112/`; canceled 2026-11-12 17:04 after epoch 1 (train 0.0224 / val 0.0212, no collapse); ~37 min/epoch with GPU1 at 2/2 slots vs ~24 min solo; rerun when a GPU is idle |
 | `srp_dnn_s42` | **done 2026-11-13 05:12** | `runs/srp_dnn_s42`; fixed five-block forward, early stopped epoch 95; DICIT F1@10 0.7665, MAE 3.26 |
 | `tf_mamba_512_s42` | **done 2026-11-15 00:40** | `runs/tf_mamba_512_s42`; `tf_mamba_dicit_512.toml` (`n_fft=512`), early stopped epoch 85; DICIT F1@10 0.9294, MAE 1.53 |
-| `ipdnet_s42` | queued 2026-11-16, no result yet | `runs/ipdnet_s42`; port of `FN-SSL@76fcb281`; GPU smoke and checkpoint round-trip passed before submission |
-| `ipdnet2_small_s42` | queued 2026-11-16, no result yet | `runs/ipdnet2_small_s42`; port of `FN-SSL@76fcb281`; GPU smoke (Mamba CUDA path) and checkpoint round-trip passed before submission |
+| `ipdnet_s42` | canceled before start — worktree refreshed to the final commit | never ran; resubmitted as `ipdnet_s42_v2` |
+| `ipdnet2_small_s42` | canceled before start — worktree refreshed to the final commit | never ran; resubmitted as `ipdnet2_small_s42_v2` |
+| `ipdnet_s42_v2` | queued 2026-11-16, no result yet | `runs/ipdnet_s42`; port of `FN-SSL@76fcb281`; GPU smoke and checkpoint round-trip passed before submission |
+| `ipdnet2_small_s42_v2` | queued 2026-11-16, no result yet | `runs/ipdnet2_small_s42`; port of `FN-SSL@76fcb281`; GPU smoke (Mamba CUDA path) and checkpoint round-trip passed before submission |
 
 **Early stopping (all rows).** `patience=6` counts validation rounds
 (`eval_every` epochs apart), matching LOCATA's `Trainer`; the package loop had
