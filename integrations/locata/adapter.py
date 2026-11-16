@@ -521,6 +521,7 @@ def cache_candidates(model, loader, *, device: str, max_sources: int = 3,
     gts: List[List[Tuple[float, float]]] = []
     candidates: List[List[Tuple[float, float, float]]] = []
     elapsed = 0.0
+    frontend_elapsed = 0.0
     template_elapsed = 0.0
     frames = 0
 
@@ -528,15 +529,33 @@ def cache_candidates(model, loader, *, device: str, max_sources: int = 3,
         if tensor.is_cuda:
             torch.cuda.synchronize(tensor.device)
 
+    native_tracks = model.model_name in ("ipdnet", "ipdnet2_small")
     for audios, labels in loader:
         audios = audios.to(device)
-        _sync(audios)
-        t0 = time.time()
-        out = model(audios)
-        _sync(audios)
-        elapsed += time.time() - t0
         frames += audios.shape[0]
         gts.extend([[tuple(float(x) for x in src) for src in sample] for sample in labels])
+
+        if native_tracks:
+            # Separate the resampler/STFT front end from the network forward.
+            _sync(audios)
+            t0 = time.time()
+            features = model.frontend(audios)
+            _sync(audios)
+            frontend_elapsed += time.time() - t0
+
+            _sync(audios)
+            t0 = time.time()
+            frame_ipd = model.backbone(features["features"])
+            ipd = model.tracks.pool_clip(frame_ipd, features["stft_frames"])
+            _sync(audios)
+            elapsed += time.time() - t0
+            out = {"ipd": ipd}
+        else:
+            _sync(audios)
+            t0 = time.time()
+            out = model(audios)
+            _sync(audios)
+            elapsed += time.time() - t0
 
         if model.model_name == "icocnn":
             acc = out["accdoa"].detach().cpu().numpy()          # (B,T,M,3)
@@ -583,10 +602,14 @@ def cache_candidates(model, loader, *, device: str, max_sources: int = 3,
         else:
             raise ValueError(f"Unsupported model for candidate caching: {model.model_name}")
 
-    return {"kind": "candidates", "frames": len(gts), "gts": gts,
-            "candidates": candidates, "elapsed_s": elapsed,
-            "forward_ms_per_frame": 1000.0 * elapsed / max(frames, 1),
-            "template_ms_per_frame": 1000.0 * template_elapsed / max(frames, 1)}
+    payload = {"kind": "candidates", "frames": len(gts), "gts": gts,
+               "candidates": candidates, "elapsed_s": elapsed,
+               "forward_ms_per_frame": 1000.0 * elapsed / max(frames, 1),
+               "template_ms_per_frame": 1000.0 * template_elapsed / max(frames, 1)}
+    if native_tracks:
+        payload["frontend_ms_per_frame"] = (
+            1000.0 * frontend_elapsed / max(frames, 1))
+    return payload
 
 
 def sweep_candidates(cache: Dict[str, Any], thresholds: Sequence[float], *,

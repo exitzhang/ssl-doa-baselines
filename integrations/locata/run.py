@@ -129,7 +129,8 @@ def cmd_smoke(args) -> int:
     model = _model_from_cfg(cfg, device)
     q = int(model_section(cfg).get("output_dim", model_section(cfg).get("n_slots", 181)))
     n_mics = int(model_section(cfg).get("num_mics", model_section(cfg).get("n_mics", 3)))
-    waveform = torch.randn(2, 16000, n_mics, device=device)
+    num_samples = int(cfg.get("data", {}).get("target_num_samples", 16000))
+    waveform = torch.randn(2, num_samples, n_mics, device=device)
     with torch.no_grad():
         out = predict_native(model, waveform, device=device)
 
@@ -390,6 +391,9 @@ def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
         payload["template_ms_per_frame"] = (
             None if result.get("template_ms_per_frame") is None
             else float(result["template_ms_per_frame"]))
+        payload["frontend_ms_per_frame"] = (
+            None if result.get("frontend_ms_per_frame") is None
+            else float(result["frontend_ms_per_frame"]))
         payload["frontend"] = _frontend_record(model, decode_cfg, key)
     return payload
 
@@ -398,7 +402,8 @@ def _frontend_record(model, decode_cfg: Dict[str, Any], key: str) -> Dict[str, A
     """Sampling/STFT/threshold metadata for the IPDnet-style models."""
     model_config = dict(getattr(model, "config", {}) or {})
     keys = ("input_sample_rate", "stft_sample_rate", "win_len", "n_fft",
-            "hop", "forgetting_frames", "pool_factor", "score_kind")
+            "hop", "forgetting_frames", "resample_lowpass_width",
+            "resample_rolloff", "pool_factor", "score_kind")
     record = {k: model_config[k] for k in keys if k in model_config}
     if not record:
         return {}
@@ -432,6 +437,12 @@ def cmd_eval(args) -> int:
             raise SystemExit(
                 f"[eval] score_kind mismatch: config={configured!r}, "
                 f"checkpoint={embedded!r}")
+        configured_name = model_section(cfg).get("name")
+        if configured_name is not None \
+                and str(configured_name).lower() != model.model_name:
+            raise SystemExit(
+                f"[eval] model name mismatch: config={configured_name!r}, "
+                f"checkpoint={model.model_name!r}")
     result = _evaluate(model, cfg, split=split, device=device,
                        device_index=args.device_index, locata_root=str(locata_root))
 
