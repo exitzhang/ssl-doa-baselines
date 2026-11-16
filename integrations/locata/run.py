@@ -70,7 +70,8 @@ def _model_from_cfg(cfg: Dict[str, Any], device: str = "cpu"):
             kwargs[key] = value
     if name is None:
         raise SystemExit("[run] config has no [model].name")
-    if name in ("icocnn", "srp_dnn") and "mic_positions" not in kwargs:
+    if (name in ("icocnn", "srp_dnn", "ipdnet", "ipdnet2_small")
+            and "mic_positions" not in kwargs):
         positions = _resolve_mic_positions(cfg)
         if positions is None:
             raise SystemExit(
@@ -173,6 +174,9 @@ def adapter_decode_smoke(model, waveform):
         cfg.update({"threshold_ratio": 0.1, "neighborhood_size": 3,
                     "min_peak_distance": 3, "threshold_abs": 0.0,
                     "silence_max_thresh": 0.0})
+    elif model.model_name in ("ipdnet", "ipdnet2_small"):
+        # Permissive threshold so the smoke test exercises the decode path.
+        cfg.update({"threshold_abs": -2.0})
     else:
         cfg.update({"threshold_abs": 0.0})
     return predict(model, waveform, decode=cfg)
@@ -200,6 +204,10 @@ def cmd_train(args) -> int:
     model = _model_from_cfg(cfg, device)
     print(f"[train] model={model.model_name} params="
           f"{sum(p.numel() for p in model.parameters()):,} device={device}")
+    if model.model_name in ("ipdnet", "ipdnet2_small"):
+        for split in ("train", "val"):
+            print(f"[train] {split} data contract: "
+                  f"{adapter.check_audio_contract(data_cfg, split=split)}")
 
     if model.model_name == "tf_mamba":
         ckpt = adapter.train_tf_mamba(
@@ -342,7 +350,7 @@ def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
         tuple(sorted((round(a, 1), round(e, 1)) for a, e in frame))
         for frame in pred_all
     }
-    return {
+    payload = {
         "model": model.model_name,
         "checkpoint": str(Path(checkpoint).resolve()),
         "split": split,
@@ -377,6 +385,31 @@ def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
         "locata": adapter.git_state(locata_root),
         "baselines": adapter.git_state(str(REPO_ROOT)),
     }
+    if model.model_name in ("ipdnet", "ipdnet2_small"):
+        # Additive fields; existing model payloads keep their schema.
+        payload["template_ms_per_frame"] = (
+            None if result.get("template_ms_per_frame") is None
+            else float(result["template_ms_per_frame"]))
+        payload["frontend"] = _frontend_record(model, decode_cfg, key)
+    return payload
+
+
+def _frontend_record(model, decode_cfg: Dict[str, Any], key: str) -> Dict[str, Any]:
+    """Sampling/STFT/threshold metadata for the IPDnet-style models."""
+    model_config = dict(getattr(model, "config", {}) or {})
+    keys = ("input_sample_rate", "stft_sample_rate", "win_len", "n_fft",
+            "hop", "forgetting_frames", "pool_factor", "score_kind")
+    record = {k: model_config[k] for k in keys if k in model_config}
+    if not record:
+        return {}
+    score_kind = str(record.get("score_kind",
+                                decode_cfg.get("score_kind", ""))).lower()
+    record["threshold_rule"] = "score >= threshold"
+    record["score_direction"] = "higher_is_better"
+    record["locked_threshold"] = float(key)
+    if score_kind == "neg_mse":
+        record["raw_mse_threshold"] = -float(key)
+    return record
 
 
 def cmd_eval(args) -> int:
@@ -389,6 +422,16 @@ def cmd_eval(args) -> int:
 
     model = load_model(args.checkpoint, config=cfg, device=device)
     split = args.split
+    if model.model_name in ("ipdnet", "ipdnet2_small"):
+        print(f"[eval] {split} data contract: "
+              f"{adapter.check_audio_contract(_data_cfg(cfg), split=split)}")
+        configured = decode_cfg.get("score_kind")
+        embedded = getattr(model, "config", {}).get("score_kind")
+        if configured is not None and embedded is not None \
+                and str(configured) != str(embedded):
+            raise SystemExit(
+                f"[eval] score_kind mismatch: config={configured!r}, "
+                f"checkpoint={embedded!r}")
     result = _evaluate(model, cfg, split=split, device=device,
                        device_index=args.device_index, locata_root=str(locata_root))
 
