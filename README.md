@@ -178,6 +178,13 @@ Submit `icocnn_multi_s42`, `srp_dnn_s42`, `ipdnet_s42` and
 `ipdnet2_small_s42` the same way with their configs.  The two IPDnet manifests
 are `queue/ipdnet_512_s42.json` and `queue/ipdnet2_small_512_s42.json`.
 
+Both IPDnet jobs run from a dedicated detached worktree,
+`/home/t-zhangchaoqin/projects/ssl/wt/ssl-doa-baselines-ipdnet`, pinned at the
+integration merge commit, so code cannot change under a running job.  The
+machine-local, git-ignored `data_local.toml` and the artifact root are passed
+by absolute path into the main checkout; `runs/ipdnet_s42` and
+`runs/ipdnet2_small_s42` therefore stay in the indexed checkout.
+
 ### IPDnet provenance
 
 Both ports are fixed-array adaptations of

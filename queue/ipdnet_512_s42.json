@@ -1,0 +1,20 @@
+{
+  "jobs": [
+    {
+      "id": "ipdnet_s42",
+      "cwd": "/home/t-zhangchaoqin/projects/ssl/wt/ssl-doa-baselines-ipdnet",
+      "argv": [
+        "/home/t-zhangchaoqin/.conda/envs/locata/bin/python",
+        "integrations/locata/train_then_eval.py",
+        "--locata-root", "/home/t-zhangchaoqin/projects/ssl/wt/locata-dev",
+        "--config", "integrations/locata/configs/ipdnet_dicit.toml",
+        "--data-config", "/home/t-zhangchaoqin/projects/ssl/ssl-doa-baselines/integrations/locata/configs/data_local.toml",
+        "--output", "/home/t-zhangchaoqin/projects/ssl/ssl-doa-baselines/runs/ipdnet_s42",
+        "--seed", "42",
+        "--device-index", "0",
+        "--epochs", "100"
+      ],
+      "timeout_seconds": 259200
+    }
+  ]
+}
