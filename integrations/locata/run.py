@@ -21,17 +21,19 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(REPO_ROOT))
 
+from ssl_doa_baselines import working_point  # noqa: E402
 from ssl_doa_baselines.api import build_model, load_model, predict_native  # noqa: E402
 from ssl_doa_baselines.config import deep_merge, load_configs, model_section  # noqa: E402
 
 from integrations.locata import adapter  # noqa: E402
+
+_NATIVE_TRACK_MODELS = ("ipdnet", "ipdnet2_small")
 
 
 def _load_cfg(args) -> Dict[str, Any]:
@@ -46,19 +48,21 @@ def _load_cfg(args) -> Dict[str, Any]:
     return cfg
 
 
-def _resolve_mic_positions(cfg: Dict[str, Any]) -> Optional[List[List[float]]]:
+def _resolve_mic_positions(cfg: Dict[str, Any],
+                           n_mics: Optional[int] = None) -> Optional[List[List[float]]]:
     data = cfg.get("data", {})
-    if "mic_positions" in data:
+    if data.get("mic_positions") is not None:
         return data["mic_positions"]
     source = data.get("mic_positions_source")
     if not source:
         return None
-    meta_path = Path(source)
-    if meta_path.is_dir():
-        meta_path = meta_path / "dataset_meta.json"
-    meta = json.loads(meta_path.read_text())
-    indices = list(data.get("mic_indices", [5, 6, 8]))
-    return np.asarray(meta["mic_pos"], dtype=np.float64)[indices].tolist()
+    positions = adapter.load_mic_positions(source)
+    indices = adapter.resolve_mic_indices(data, n_mics=n_mics)
+    if max(indices) >= len(positions):
+        raise SystemExit(
+            f"[run] mic_indices {indices} exceed the {len(positions)} mics in "
+            f"{source}")
+    return positions[indices].tolist()
 
 
 def _model_from_cfg(cfg: Dict[str, Any], device: str = "cpu"):
@@ -72,7 +76,8 @@ def _model_from_cfg(cfg: Dict[str, Any], device: str = "cpu"):
         raise SystemExit("[run] config has no [model].name")
     if (name in ("icocnn", "srp_dnn", "ipdnet", "ipdnet2_small")
             and "mic_positions" not in kwargs):
-        positions = _resolve_mic_positions(cfg)
+        n_mics = kwargs.get("n_mics")
+        positions = _resolve_mic_positions(cfg, n_mics=n_mics)
         if positions is None:
             raise SystemExit(
                 f"[run] {name} needs [data].mic_positions or "
@@ -81,6 +86,15 @@ def _model_from_cfg(cfg: Dict[str, Any], device: str = "cpu"):
         kwargs["mic_positions"] = positions
     model = build_model(name, kwargs)
     return model.to(device)
+
+
+def _score_kind(model, decode_cfg: Dict[str, Any]) -> Optional[str]:
+    value = getattr(model, "score_kind", None)
+    if value is None:
+        value = dict(getattr(model, "config", {}) or {}).get("score_kind")
+    if value is None:
+        value = decode_cfg.get("score_kind")
+    return None if value is None else str(value).lower()
 
 
 def _data_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -203,12 +217,17 @@ def cmd_train(args) -> int:
     adapter.seed_everything(seed)
 
     model = _model_from_cfg(cfg, device)
-    print(f"[train] model={model.model_name} params="
-          f"{sum(p.numel() for p in model.parameters()):,} device={device}")
-    if model.model_name in ("ipdnet", "ipdnet2_small"):
+    num_params = adapter.count_parameters(model)
+    print(f"[train] model={model.model_name} params={num_params:,} device={device}")
+    if model.model_name in _NATIVE_TRACK_MODELS:
         for split in ("train", "val"):
             print(f"[train] {split} data contract: "
                   f"{adapter.check_audio_contract(data_cfg, split=split)}")
+        array_record = adapter.check_fixed_array(model, data_cfg)
+        print(f"[train] fixed array mic_indices={array_record['mic_indices']} "
+              f"ref_mic={array_record['ref_mic']} matches train/val geometry")
+        data_cfg = adapter.attach_array_record(data_cfg, array_record)
+        cfg["data"] = data_cfg
 
     if model.model_name == "tf_mamba":
         ckpt = adapter.train_tf_mamba(
@@ -234,58 +253,125 @@ def cmd_train(args) -> int:
     val_result = _evaluate(model, cfg, split="val", device=device,
                            device_index=args.device_index,
                            locata_root=str(locata_root))
-    wp = adapter.lock_working_point(val_result["metrics_by_key"],
-                                    int(decode_cfg.get("source_column", 10)))
-    adapter.write_json(out_dir / "validation.json", {
-        "locked": wp,
-        "curve": val_result["metrics_by_key"],
-        "r_at_far_3": adapter.interpolate_at_far(
-            val_result["metrics_by_key"],
-            float(decode_cfg.get("far_target", 0.03)),
-            int(decode_cfg.get("source_column", 10)),
-        ),
-        "frames": val_result["frames"],
-        "source_count_dist": val_result["source_count_dist"],
-    })
+    point = adapter.lock_working_point(
+        val_result["metrics_by_key"],
+        int(decode_cfg.get("source_column", 10)))
+    wp = working_point.make_locked_record(
+        point, model=model.model_name, checkpoint=ckpt,
+        score_kind=_score_kind(model, decode_cfg),
+        acc_threshold=int(decode_cfg.get("source_column", 10)))
+    _write_validation(out_dir / "validation.json", model=model, checkpoint=ckpt,
+                      result=val_result, locked=wp, cfg=cfg)
     print(f"[train] validation locked at {wp['key']} (F1@10={wp['F1']:.4f})")
     adapter.write_json(out_dir / "train_result.json", {
         "checkpoint": str(Path(ckpt).resolve()),
         "validation": str((out_dir / "validation.json").resolve()),
+        "num_params": num_params,
         "locked": wp,
     })
     return 0
+
+
+def _write_validation(path, *, model, checkpoint: str, result: Dict[str, Any],
+                      locked: Dict[str, Any], cfg: Dict[str, Any]) -> None:
+    """Write the simulated-validation curve and the locked working point.
+
+    Shared by ``train`` and a standalone ``eval --split val`` so the DICIT
+    evaluation can require the same lock regardless of how it was produced.
+    """
+    decode_cfg = dict(cfg.get("decode", {}))
+    adapter.write_json(path, {
+        "model": model.model_name,
+        "checkpoint": str(Path(checkpoint).resolve()),
+        "split": "val",
+        "locked": locked,
+        "curve": result["metrics_by_key"],
+        "r_at_far_3": adapter.interpolate_at_far(
+            result["metrics_by_key"],
+            float(decode_cfg.get("far_target", 0.03)),
+            int(decode_cfg.get("source_column", 10)),
+        ),
+        "frames": result["frames"],
+        "source_count_dist": result["source_count_dist"],
+    })
 
 
 # ---------------------------------------------------------------------------
 # eval
 # ---------------------------------------------------------------------------
 
+def _build_loader(cfg: Dict[str, Any], split: str):
+    data_cfg = _data_cfg(cfg)
+    batch_size = int(data_cfg.get("eval_batch_size", 4))
+    workers = int(data_cfg.get("eval_num_workers", 4))
+    if split == "val":
+        ds = adapter.build_angle_dataset(data_cfg["val_root"], data_cfg,
+                                         use_val=True,
+                                         n_mics=_cfg_n_mics(cfg))
+        return adapter.build_loader(ds, batch_size=batch_size,
+                                    num_workers=workers, shuffle=False)
+    return adapter.build_dicit_loader(
+        data_cfg["dicit_root"], data_cfg, batch_size=batch_size,
+        num_workers=workers, n_mics=_cfg_n_mics(cfg))
+
+
+def _cfg_n_mics(cfg: Dict[str, Any]) -> Optional[int]:
+    section = model_section(cfg)
+    for key in ("n_mics", "num_mics"):
+        if section.get(key) is not None:
+            return int(section[key])
+    return None
+
+
+def _merge_thresholds(values, extra) -> List[float]:
+    """Configured grid plus the locked point, compared numerically.
+
+    A changed config or a different JSON key spelling must not drop the
+    locked point from the reported test curve.
+    """
+    grid: List[float] = []
+    for value in list(values) + list(extra or []):
+        threshold = float(value)
+        if all(abs(threshold - existing) > 1e-9 for existing in grid):
+            grid.append(threshold)
+    return grid
+
+
+def _metrics_at_threshold(metrics_by_key: Dict[str, dict],
+                          threshold: float) -> Optional[dict]:
+    target = float(threshold)
+    for key, metrics in metrics_by_key.items():
+        try:
+            value = float(key)
+        except (TypeError, ValueError):
+            continue
+        if abs(value - target) <= 1e-9:
+            return metrics
+    return None
+
+
 def _evaluate(model, cfg: Dict[str, Any], *, split: str, device: str,
-              device_index: int, locata_root: str) -> Dict[str, Any]:
+              device_index: int, locata_root: str,
+              extra_thresholds: Optional[List[float]] = None) -> Dict[str, Any]:
     data_cfg = _data_cfg(cfg)
     decode_cfg = dict(cfg.get("decode", {}))
     batch_size = int(data_cfg.get("eval_batch_size", 4))
-    workers = int(data_cfg.get("eval_num_workers", 4))
     max_sources = int(decode_cfg.get("max_sources", 3))
     acc = tuple(int(v) for v in decode_cfg.get("acc_thresholds", [5, 10, 15]))
     silence = float(decode_cfg.get(
         "silence_max_thresh_val" if split == "val" else "silence_max_thresh_dicit",
         0.0 if split == "val" else 0.1))
 
-    if split == "val":
-        ds = adapter.build_angle_dataset(data_cfg["val_root"], data_cfg, use_val=True)
-        loader = adapter.build_loader(ds, batch_size=batch_size, num_workers=workers,
-                                      shuffle=False)
-    else:
-        loader = adapter.build_dicit_loader(data_cfg["dicit_root"], data_cfg,
-                                            batch_size=batch_size, num_workers=workers)
+    loader = _build_loader(cfg, split)
 
     if model.model_name == "tf_mamba":
         spectrum = adapter.eval_spectrum(
             model, loader, device=device,
-            ratios=decode_cfg.get("ratio_thresholds", [0.01, 0.02, 0.05, 0.075, 0.1,
-                                                        0.15, 0.2, 0.25, 0.3, 0.4,
-                                                        0.5, 0.65, 0.8]),
+            ratios=_merge_thresholds(
+                decode_cfg.get("ratio_thresholds",
+                               [0.01, 0.02, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25,
+                                0.3, 0.4, 0.5, 0.65, 0.8]),
+                extra_thresholds),
             acc_thresholds=acc, max_sources=max_sources,
             silence_max_thresh=silence,
         )
@@ -298,11 +384,13 @@ def _evaluate(model, cfg: Dict[str, Any], *, split: str, device: str,
     cache = adapter.cache_candidates(model, loader, device=device,
                                      max_sources=max_sources,
                                      frame_index=int(decode_cfg.get("frame_index", -1)))
+    thresholds = _merge_thresholds(
+        decode_cfg.get("score_thresholds",
+                       [0.0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35,
+                        0.4, 0.45, 0.5, 0.6, 0.7, 0.8, 0.9]),
+        extra_thresholds)
     metrics = adapter.sweep_candidates(
-        cache, decode_cfg.get("score_thresholds",
-                              [0.0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3,
-                               0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8, 0.9]),
-        max_sources=max_sources, acc_thresholds=acc,
+        cache, thresholds, max_sources=max_sources, acc_thresholds=acc,
     )
     cache["metrics_by_key"] = metrics
     cache["source_count_dist"] = {
@@ -333,17 +421,23 @@ def _plain_angles(rows) -> List[List[float]]:
 def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
                   cfg: Dict[str, Any], decode_cfg: Dict[str, Any], split: str,
                   acc, checkpoint: str, decode_s: float,
-                  locata_root: str) -> Dict[str, Any]:
+                  locata_root: str,
+                  inference: Optional[Dict[str, Any]] = None,
+                  array_contract: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Assemble ``eval_<split>.json``; kept separate so it can be tested."""
     far_target = float(decode_cfg.get("far_target", 0.03))
     frames = max(int(result["frames"]), 1)
     key = str(locked["key"])
+    threshold = float(locked.get("threshold", key))
     # ``locked`` holds the *validation* working point that chose the threshold;
     # the metrics reported for this split must come from this split's own curve
-    # at that same threshold.
-    metrics_at_key = result["metrics_by_key"].get(key)
+    # at that same threshold.  Look it up numerically so a changed JSON key
+    # spelling cannot silently drop the point.
+    metrics_at_key = _metrics_at_threshold(result["metrics_by_key"], threshold)
     if metrics_at_key is None:
-        raise KeyError(f"locked threshold {key!r} not in the {split} curve")
+        raise KeyError(
+            f"locked threshold {threshold!r} not in the {split} curve "
+            f"(keys: {sorted(result['metrics_by_key'])})")
     # Collapse guard: a model that outputs the same detection set on every frame
     # (e.g. icocnn_multi_s42_v4) still produces a plausible-looking F1, so record
     # the diversity and let ``cmd_eval`` warn about it.
@@ -358,7 +452,8 @@ def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
         "frames": result["frames"],
         "source_count_dist": result["source_count_dist"],
         "working_point": locked,
-        "locked_threshold": float(key),
+        "locked_threshold": threshold,
+        "num_params": adapter.count_parameters(model),
         "metrics": metrics_at_key,
         "by_source_count": adapter.score_by_source_count(
             result["gts"], pred_all, acc_thresholds=acc),
@@ -386,7 +481,10 @@ def _eval_payload(*, model, result: Dict[str, Any], pred_all, locked: dict,
         "locata": adapter.git_state(locata_root),
         "baselines": adapter.git_state(str(REPO_ROOT)),
     }
-    if model.model_name in ("ipdnet", "ipdnet2_small"):
+    if inference:
+        payload.update(inference)
+    payload["array_contract"] = array_contract
+    if model.model_name in _NATIVE_TRACK_MODELS:
         # Additive fields; existing model payloads keep their schema.
         payload["template_ms_per_frame"] = (
             None if result.get("template_ms_per_frame") is None
@@ -417,6 +515,28 @@ def _frontend_record(model, decode_cfg: Dict[str, Any], key: str) -> Dict[str, A
     return record
 
 
+def _require_dicit_lock(args, model, meta: Dict[str, Any],
+                        decode_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Checkpoint identity + validation lock, before any data loading."""
+    if not args.validation:
+        raise SystemExit(
+            f"[eval] DICIT evaluation of {model.model_name} requires "
+            "--validation: the DICIT operating point must be the threshold "
+            "locked on the simulated validation set. Run\n"
+            "  locata-runner --config ... --data-config ... eval "
+            f"--checkpoint {args.checkpoint} --split val "
+            "--output <path>/validation.json")
+    try:
+        return working_point.require_locked(
+            args.validation, model=model.model_name,
+            checkpoint=args.checkpoint,
+            score_kind=_score_kind(model, decode_cfg),
+            acc_threshold=int(decode_cfg.get("source_column", 10)),
+            checkpoint_sha=meta.get("sha256"))
+    except working_point.WorkingPointError as exc:
+        raise SystemExit(f"[eval] {exc}")
+
+
 def cmd_eval(args) -> int:
     cfg = _load_cfg(args)
     decode_cfg = dict(cfg.get("decode", {}))
@@ -425,43 +545,101 @@ def cmd_eval(args) -> int:
     device = _device(args)
     locata_root = adapter.ensure_locata(args.locata_root)
 
+    meta = working_point.checkpoint_meta(args.checkpoint)
     model = load_model(args.checkpoint, config=cfg, device=device)
     split = args.split
-    if model.model_name in ("ipdnet", "ipdnet2_small"):
-        print(f"[eval] {split} data contract: "
-              f"{adapter.check_audio_contract(_data_cfg(cfg), split=split)}")
-        configured = decode_cfg.get("score_kind")
-        embedded = getattr(model, "config", {}).get("score_kind")
-        if configured is not None and embedded is not None \
-                and str(configured) != str(embedded):
-            raise SystemExit(
-                f"[eval] score_kind mismatch: config={configured!r}, "
-                f"checkpoint={embedded!r}")
+    native_tracks = model.model_name in _NATIVE_TRACK_MODELS
+    if split == "val" and args.validation:
+        raise SystemExit("[eval] --validation is only used for the DICIT split; "
+                         "validation is selected from this run's own curve")
+
+    locked = None
+    if native_tracks:
         configured_name = model_section(cfg).get("name")
         if configured_name is not None \
                 and str(configured_name).lower() != model.model_name:
             raise SystemExit(
                 f"[eval] model name mismatch: config={configured_name!r}, "
                 f"checkpoint={model.model_name!r}")
-    result = _evaluate(model, cfg, split=split, device=device,
-                       device_index=args.device_index, locata_root=str(locata_root))
+        embedded = _score_kind(model, decode_cfg)
+        configured = decode_cfg.get("score_kind")
+        if configured is not None and embedded is not None \
+                and str(configured).lower() != embedded:
+            raise SystemExit(
+                f"[eval] score_kind mismatch: config={configured!r}, "
+                f"checkpoint={embedded!r}")
+        if split == "dicit":
+            # Identity check first: no dataset read and no forward before this.
+            locked = _require_dicit_lock(args, model, meta, decode_cfg)
 
-    if args.validation:
-        val = json.loads(Path(args.validation).read_text())
-        locked = val["locked"]
-    else:
-        locked = adapter.lock_working_point(result["metrics_by_key"],
-                                            int(decode_cfg.get("source_column", 10)))
+    array_contract = None
+    if native_tracks:
+        print(f"[eval] {split} data contract: "
+              f"{adapter.check_audio_contract(_data_cfg(cfg), split=split)}")
+        array_contract = adapter.check_eval_array(
+            model, meta.get("config") or {}, _data_cfg(cfg), split=split)
+        print(f"[eval] array contract: mic_indices="
+              f"{array_contract['mic_indices']} geometry="
+              f"{array_contract['geometry_source']}")
+
+    if split == "dicit" and locked is None and args.validation:
+        # Non-native models reuse a supplied lock without identity checks;
+        # its point still joins the test curve.
+        locked = working_point.read_validation(args.validation)["locked"]
+    extra = None
+    if locked is not None:
+        extra = [float(locked.get("threshold", locked["key"]))]
+
+    result = _evaluate(
+        model, cfg, split=split, device=device,
+        device_index=args.device_index, locata_root=str(locata_root),
+        extra_thresholds=extra)
+
+    if split == "val":
+        point = adapter.lock_working_point(
+            result["metrics_by_key"], int(decode_cfg.get("source_column", 10)))
+        locked = working_point.make_locked_record(
+            point, model=model.model_name, checkpoint=args.checkpoint,
+            score_kind=_score_kind(model, decode_cfg),
+            acc_threshold=int(decode_cfg.get("source_column", 10)),
+            checkpoint_sha=meta.get("sha256"))
+        out = Path(args.output) if args.output \
+            else Path(args.checkpoint).parent / "validation.json"
+        if out.is_dir():
+            out = out / "validation.json"
+        _write_validation(out, model=model, checkpoint=args.checkpoint,
+                          result=result, locked=locked, cfg=cfg)
+        print(f"[eval] validation locked at {locked['key']} "
+              f"(F1@10={locked['F1']:.4f}) -> {out}")
+        return 0
+
+    if locked is None:
+        if args.validation:
+            locked = working_point.read_validation(args.validation)["locked"]
+        else:
+            locked = adapter.lock_working_point(
+                result["metrics_by_key"],
+                int(decode_cfg.get("source_column", 10)))
 
     key = str(locked["key"])
+    threshold = float(locked.get("threshold", key))
     t_decode = time.time()
     pred_all = _decoded(model, result, key, decode_cfg, split, max_sources)
     decode_s = time.time() - t_decode
+
+    data_cfg = _data_cfg(cfg)
+    batches = adapter.collect_audio_batches(_build_loader(cfg, split), device)
+    inference = adapter.benchmark_inference(
+        model, batches, decode_cfg=decode_cfg, split=split, threshold=threshold,
+        warmup_batches=int(data_cfg.get("inference_warmup_batches", 1)),
+        repeats=int(data_cfg.get("inference_repeats", 1)))
+
     payload = _eval_payload(
         model=model, result=result, pred_all=pred_all, locked=locked, cfg=cfg,
         decode_cfg=decode_cfg, split=split, acc=acc,
         checkpoint=args.checkpoint, decode_s=decode_s,
-        locata_root=str(locata_root),
+        locata_root=str(locata_root), inference=inference,
+        array_contract=array_contract,
     )
     out = Path(args.output) if args.output else Path(args.checkpoint).parent / f"eval_{split}.json"
     if out.is_dir():
@@ -477,6 +655,7 @@ def cmd_eval(args) -> int:
     print(f"[eval] {model.model_name} {split} @ threshold {payload['locked_threshold']}: "
           f"F1@{acc[len(acc) // 2]}={m['F1']:.4f} "
           f"P={m['P']:.4f} R={m['R']:.4f} FAR={m['FAR']:.4f} MAE={m['MAE']:.2f} "
+          f"inference={payload['inference_ms_per_clip']:.3f} ms/clip "
           f"-> {out}")
     return 0
 
