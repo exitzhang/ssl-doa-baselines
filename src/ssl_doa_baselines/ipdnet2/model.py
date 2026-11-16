@@ -32,6 +32,8 @@ class IPDnet2SmallBaseline(DPIPDClipModel):
         n_fft: int = 512,
         hop: int = 320,
         forgetting_frames: int = 249,
+        resample_lowpass_width: int = 6,
+        resample_rolloff: float = 0.99,
         dim_hidden: int = 96,
         num_layers: int = 8,
         dim_squeeze: int = 8,
@@ -65,7 +67,9 @@ class IPDnet2SmallBaseline(DPIPDClipModel):
             input_sample_rate=input_sample_rate,
             stft_sample_rate=stft_sample_rate,
             win_len=win_len, n_fft=n_fft, hop_length=hop,
-            n_mics=n_mics, forgetting_frames=forgetting_frames)
+            n_mics=n_mics, forgetting_frames=forgetting_frames,
+            resample_lowpass_width=resample_lowpass_width,
+            resample_rolloff=resample_rolloff)
         n_pairs = int(n_mics) - 1
         backbone = OnlineSpatialNet(
             dim_input=2 * int(n_mics),
@@ -104,6 +108,8 @@ class IPDnet2SmallBaseline(DPIPDClipModel):
             "n_fft": int(n_fft),
             "hop": int(hop),
             "forgetting_frames": int(forgetting_frames),
+            "resample_lowpass_width": int(resample_lowpass_width),
+            "resample_rolloff": float(resample_rolloff),
             "dim_hidden": int(dim_hidden),
             "num_layers": int(num_layers),
             "dim_squeeze": int(dim_squeeze),

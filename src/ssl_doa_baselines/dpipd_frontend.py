@@ -42,7 +42,9 @@ class DPIPDFrontend(nn.Module):
 
     def __init__(self, input_sample_rate: int = 48000, stft_sample_rate: int = 16000,
                  win_len: int = 512, n_fft: int = 512, hop_length: int = 256,
-                 n_mics: int = 3, forgetting_frames: int = 280, eps: float = 1e-6):
+                 n_mics: int = 3, forgetting_frames: int = 280,
+                 resample_lowpass_width: int = 6, resample_rolloff: float = 0.99,
+                 eps: float = 1e-6):
         super().__init__()
         import torchaudio
 
@@ -55,10 +57,14 @@ class DPIPDFrontend(nn.Module):
         self.hop_length = int(hop_length)
         self.n_mics = int(n_mics)
         self.forgetting_frames = int(forgetting_frames)
+        self.resample_lowpass_width = int(resample_lowpass_width)
+        self.resample_rolloff = float(resample_rolloff)
         self.eps = float(eps)
 
         self.resampler = torchaudio.transforms.Resample(
-            self.input_sample_rate, self.stft_sample_rate)
+            self.input_sample_rate, self.stft_sample_rate,
+            lowpass_filter_width=self.resample_lowpass_width,
+            rolloff=self.resample_rolloff)
         self.register_buffer("window", torch.hann_window(self.win_len),
                              persistent=False)
 

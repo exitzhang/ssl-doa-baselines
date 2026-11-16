@@ -30,6 +30,8 @@ class IPDNetBaseline(DPIPDClipModel):
         n_fft: int = 512,
         hop: int = 256,
         forgetting_frames: int = 280,
+        resample_lowpass_width: int = 6,
+        resample_rolloff: float = 0.99,
         hidden_size: int = 128,
         max_tracks: int = 3,
         pool_factor: int = 12,
@@ -52,7 +54,9 @@ class IPDNetBaseline(DPIPDClipModel):
             input_sample_rate=input_sample_rate,
             stft_sample_rate=stft_sample_rate,
             win_len=win_len, n_fft=n_fft, hop_length=hop,
-            n_mics=n_mics, forgetting_frames=forgetting_frames)
+            n_mics=n_mics, forgetting_frames=forgetting_frames,
+            resample_lowpass_width=resample_lowpass_width,
+            resample_rolloff=resample_rolloff)
         backbone = IPDnetBackbone(
             input_size=2 * int(n_mics), hidden_size=hidden_size,
             max_tracks=max_tracks, n_pairs=int(n_mics) - 1, dropout=dropout)
@@ -73,6 +77,8 @@ class IPDNetBaseline(DPIPDClipModel):
             "n_fft": int(n_fft),
             "hop": int(hop),
             "forgetting_frames": int(forgetting_frames),
+            "resample_lowpass_width": int(resample_lowpass_width),
+            "resample_rolloff": float(resample_rolloff),
             "hidden_size": int(hidden_size),
             "max_tracks": int(max_tracks),
             "pool_factor": int(pool_factor),

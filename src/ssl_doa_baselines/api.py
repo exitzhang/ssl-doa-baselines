@@ -73,7 +73,8 @@ def build_model(name: Optional[str] = None, config: Optional[Dict[str, Any]] = N
 
         allowed = {"mic_positions", "n_mics", "input_sample_rate",
                    "stft_sample_rate", "win_len", "n_fft", "hop",
-                   "forgetting_frames", "hidden_size", "max_tracks",
+                   "forgetting_frames", "resample_lowpass_width",
+                   "resample_rolloff", "hidden_size", "max_tracks",
                    "pool_factor", "ref_mic", "az_range_deg", "n_az",
                    "elevation_deg", "speed", "dropout", "score_kind"}
         return IPDNetBaseline(**{k: v for k, v in cfg.items() if k in allowed})
@@ -83,7 +84,8 @@ def build_model(name: Optional[str] = None, config: Optional[Dict[str, Any]] = N
 
         allowed = {"mic_positions", "n_mics", "input_sample_rate",
                    "stft_sample_rate", "win_len", "n_fft", "hop",
-                   "forgetting_frames", "dim_hidden", "num_layers",
+                   "forgetting_frames", "resample_lowpass_width",
+                   "resample_rolloff", "dim_hidden", "num_layers",
                    "dim_squeeze", "num_heads", "kernel_size", "conv_groups",
                    "norms", "attention", "rope", "fre_compression_ratio",
                    "time_compression_ratio", "time_compression_layer",
