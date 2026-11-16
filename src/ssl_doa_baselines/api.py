@@ -1,10 +1,12 @@
 """Stable package API: build, load, predict and decode.
 
-The three models deliberately differ in their native output:
+The models deliberately differ in their native output:
 
-* ``tf_mamba``  -> clip-level azimuth spectrum ``(B, Q)``;
-* ``icocnn``    -> ACCDOA slots ``(B, T, M, 3)``;
-* ``srp_dnn``   -> mixed DP-IPD ``(B, T, 2F, P)`` decoded by IDL.
+* ``tf_mamba``    -> clip-level azimuth spectrum ``(B, Q)``;
+* ``icocnn``      -> ACCDOA slots ``(B, T, M, 3)``;
+* ``srp_dnn``     -> mixed DP-IPD ``(B, T, 2F, P)`` decoded by IDL;
+* ``ipdnet``      -> per-track DP-IPD ``(B, 2F, P, K)`` (projection ratio);
+* ``ipdnet2_small`` -> per-track DP-IPD ``(B, 2F, P, K)`` (negative MSE).
 
 ``predict`` hides that difference and returns, for every input clip, a list of
 ``{"azimuth_deg", "elevation_deg"?, "score"}`` detections.
@@ -19,7 +21,7 @@ import torch
 from .config import model_section
 from .tf_mamba.decode import decode_spectrum
 
-_MODEL_NAMES = ("tf_mamba", "icocnn", "srp_dnn")
+_MODEL_NAMES = ("tf_mamba", "icocnn", "srp_dnn", "ipdnet", "ipdnet2_small")
 
 
 def _split_config(config: Optional[Dict[str, Any]], overrides: Dict[str, Any]):
@@ -65,6 +67,30 @@ def build_model(name: Optional[str] = None, config: Optional[Dict[str, Any]] = N
                    "freq_min", "freq_max", "max_num_sources", "az_range_deg",
                    "el_range_deg", "n_az", "n_el"}
         return SRPDNN(**{k: v for k, v in cfg.items() if k in allowed})
+
+    if name in {"ipdnet", "ipd_net"}:
+        from .ipdnet.model import IPDNetBaseline
+
+        allowed = {"mic_positions", "n_mics", "input_sample_rate",
+                   "stft_sample_rate", "win_len", "n_fft", "hop",
+                   "forgetting_frames", "hidden_size", "max_tracks",
+                   "pool_factor", "ref_mic", "az_range_deg", "n_az",
+                   "elevation_deg", "speed", "dropout", "score_kind"}
+        return IPDNetBaseline(**{k: v for k, v in cfg.items() if k in allowed})
+
+    if name in {"ipdnet2_small", "ipdnet2"}:
+        from .ipdnet2.model import IPDnet2SmallBaseline
+
+        allowed = {"mic_positions", "n_mics", "input_sample_rate",
+                   "stft_sample_rate", "win_len", "n_fft", "hop",
+                   "forgetting_frames", "dim_hidden", "num_layers",
+                   "dim_squeeze", "num_heads", "kernel_size", "conv_groups",
+                   "norms", "attention", "rope", "fre_compression_ratio",
+                   "time_compression_ratio", "time_compression_layer",
+                   "encoder_kernel_size", "max_tracks", "pool_factor",
+                   "ref_mic", "az_range_deg", "n_az", "elevation_deg",
+                   "speed", "score_kind"}
+        return IPDnet2SmallBaseline(**{k: v for k, v in cfg.items() if k in allowed})
 
     raise ValueError(f"Unknown model {name!r}; expected one of {_MODEL_NAMES}")
 
@@ -188,6 +214,31 @@ def predict(model: torch.nn.Module, waveform, *, decode: Optional[Dict[str, Any]
             max_sources=int(decode.get("max_sources", 3)),
             frame_index=int(decode.get("frame_index", -1)),
         )
+
+    if name in {"ipdnet", "ipdnet2_small"}:
+        out = model(x)
+        ipd = out["ipd"]
+        score_kind = str(decode.get("score_kind",
+                                    getattr(model, "score_kind", "ratio")))
+        threshold = float(decode.get("threshold_abs", 0.0))
+        max_sources = int(decode.get("max_sources", ipd.shape[-1]))
+        scores, azimuth, elevation = model.tracks.decode_candidates(
+            ipd, score_kind=score_kind)
+        detections: List[List[Dict[str, float]]] = []
+        for b in range(scores.shape[0]):
+            row: List[Dict[str, float]] = []
+            for k in range(scores.shape[1]):
+                if float(scores[b, k]) < threshold:
+                    continue
+                row.append({
+                    "azimuth_deg": float(azimuth[b, k]),
+                    "elevation_deg": float(elevation[b, k]),
+                    "score": float(scores[b, k]),
+                })
+                if len(row) >= max_sources:
+                    break
+            detections.append(row)
+        return detections
 
     raise ValueError(f"Unknown model {name!r}")
 
