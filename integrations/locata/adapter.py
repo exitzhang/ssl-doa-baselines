@@ -615,6 +615,8 @@ def train_native(model, data_cfg, train_cfg, *, out_dir: str, seed: int,
                               shuffle=False)
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
+    max_train_batches = train_cfg.get("max_train_batches")
+    max_val_batches = train_cfg.get("max_val_batches")
     with open(out_path / "train.log", "w", buffering=1) as log_file:
         def log_fn(line: str) -> None:
             log_file.write(line + "\n")
@@ -638,6 +640,10 @@ def train_native(model, data_cfg, train_cfg, *, out_dir: str, seed: int,
             config={"model": dict(model.config, name=model.model_name),
                     "train": train_cfg, "data": data_cfg},
             log_fn=log_fn,
+            max_train_batches=(None if max_train_batches is None
+                               else int(max_train_batches)),
+            max_val_batches=(None if max_val_batches is None
+                             else int(max_val_batches)),
         )
     best = Path(out_dir) / "best.pth"
     ckpt = torch.load(best, map_location="cpu", weights_only=False)
