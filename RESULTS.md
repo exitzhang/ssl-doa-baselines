@@ -7,10 +7,20 @@ simulated validation set; DICIT curves are reported separately.
 **Status 2026-11-16.** Three runs are complete and evaluated on DICIT:
 `tf_mamba_s42` (n_fft=1536), `tf_mamba_512_s42`, `srp_dnn_s42`.  IcoCNN has
 **no completed run** — every attempt so far is aborted or paused (see the run
-log), so its main-table row stays empty.  Two new rows are queued:
+log), so its main-table row stays empty.  Two new rows are queued as v3:
 `ipdnet_s42` and `ipdnet2_small_s42` (fixed 3-microphone ports of
 `FN-SSL@76fcb281`, clip-level DP-IPD PIT; see `THIRD_PARTY.md`).  Their cells
 stay `pending` until the validation lock and DICIT evaluation finish.
+
+**Review fix 2026-11-16.** The IPDnet rows now run under the corrected
+contract: the DICIT point is the threshold locked on the simulated validation
+set (checkpoint-identity checked), the fixed array / channel order is recorded
+in the checkpoint and verified before evaluation, predictions require an
+explicit threshold, `num_params` is counted from the rebuilt model
+(725,248 / 1,246,764) and each eval writes a unified
+`inference_ms_per_clip`.  Bounded train/val/DICIT smoke runs passed for both
+models before resubmission, and the frozen train/val/DICIT manifests passed
+the pre-run array check.
 
 **Naming.**  Canonical runs use the model name plus the seed only
 (`srp_dnn_s42`, `tf_mamba_s42`, `icocnn_multi_s42`); front-end or task variants
@@ -127,8 +137,8 @@ the validation numbers by construction (`_eval_payload` in
 | `srp_dnn_s42` | **done 2026-11-13 05:12** (`runs/srp_dnn_s42`) | `srp_dnn_dicit.toml` (win 1536 / hop 768 / n_fft 1536, 100–8000 Hz, 100 epochs / patience 6 / seed 42, five-block forward) | Main-table SRP-DNN row; replaced the aborted 4-block run. |
 | `tf_mamba_512_s42` | **done 2026-11-15 00:40** (`runs/tf_mamba_512_s42`) | `tf_mamba_dicit_512.toml`: `n_fft=512`, `hop_length=480`, 100–8000 Hz (84 bins), 3 mics, Q=181, 100 epochs / patience 6 / seed 42 | Front-end ablation against the 1536/480 run. The 512 front end is 10.7 ms / 93.75 Hz, not the paper's 32 ms / 31.25 Hz, so it is an adapted setting. |
 | `tf_mamba_s42` | **done 2026-11-14 15:45** (`runs/tf_mamba_spectrum_s42`) | `n_fft=1536`, `hop_length=480`, Q=181, 100 epochs / patience 6 / seed 42, fp32 batch 8, `label_sigma=3.0` | Main-table TF-Mamba row. |
-| `ipdnet_s42` | **queued** (`queue/ipdnet_512_s42.json`) | `ipdnet_dicit.toml`: 48->16 kHz, 512 FFT / hop 256, 3 tracks, Adam lr 5e-4, exponential 0.975, 100 epochs / patience 6 / seed 42 | Main-table IPDnet row; clip-level DP-IPD PIT, projection-ratio decode. |
-| `ipdnet2_small_s42` | **queued** (`queue/ipdnet2_small_512_s42.json`) | `ipdnet2_small_dicit.toml`: 48->16 kHz, 512 FFT / hop 320, 8 layers / hidden 96 / `mamba(16,4)`, AdamW, 100 epochs / patience 6 / seed 42 | Main-table IPDnet2-Small row; negative-MSE decode. Needs the `locata` env's `mamba-ssm==2.1.0`. |
+| `ipdnet_s42` | **queued v3** (`queue/ipdnet_512_s42_v3.json`) | `ipdnet_dicit.toml`: 48->16 kHz, 512 FFT / hop 256, 3 tracks, Adam lr 5e-4, exponential 0.975, 100 epochs / patience 6 / seed 42 | Main-table IPDnet row; clip-level DP-IPD PIT, projection-ratio decode. |
+| `ipdnet2_small_s42` | **queued v3** (`queue/ipdnet2_small_512_s42_v3.json`) | `ipdnet2_small_dicit.toml`: 48->16 kHz, 512 FFT / hop 320, 8 layers / hidden 96 / `mamba(16,4)`, AdamW, 100 epochs / patience 6 / seed 42 | Main-table IPDnet2-Small row; negative-MSE decode. Needs the `locata` env's `mamba-ssm==2.1.0`. |
 | `icocnn_multi_s42` | backlog; **run when a GPU is idle** (too slow to share one) | reference head (last conv → `M` + Soft-ArgMax), `lr 1e-4`, cross-pair-only SRP maps, 100 epochs / patience 6 / seed 42 | Main-table IcoCNN row. ~37 min/epoch with GPU1 at 2/2 slots vs ~24 min solo; the paused epoch-1 attempt was healthy (train 0.0224 / val 0.0212). |
 
 ## Run log
@@ -159,8 +169,10 @@ cited as results.
 | `tf_mamba_512_s42` | **done 2026-11-15 00:40** | `runs/tf_mamba_512_s42`; `tf_mamba_dicit_512.toml` (`n_fft=512`), early stopped epoch 85; DICIT F1@10 0.9294, MAE 1.53 |
 | `ipdnet_s42` | canceled before start — worktree refreshed to the final commit | never ran; resubmitted as `ipdnet_s42_v2` |
 | `ipdnet2_small_s42` | canceled before start — worktree refreshed to the final commit | never ran; resubmitted as `ipdnet2_small_s42_v2` |
-| `ipdnet_s42_v2` | queued 2026-11-16, no result yet | `runs/ipdnet_s42`; port of `FN-SSL@76fcb281`; GPU smoke and checkpoint round-trip passed before submission |
-| `ipdnet2_small_s42_v2` | queued 2026-11-16, no result yet | `runs/ipdnet2_small_s42`; port of `FN-SSL@76fcb281`; GPU smoke (Mamba CUDA path) and checkpoint round-trip passed before submission |
+| `ipdnet_s42_v2` | canceled 2026-11-16 before start — review fix (validation lock / array contract); resubmitted as v3 | never ran |
+| `ipdnet2_small_s42_v2` | canceled 2026-11-16 before start — review fix (validation lock / array contract); resubmitted as v3 | never ran |
+| `ipdnet_s42_v3` | queued 2026-11-16, no result yet | `runs/ipdnet_s42`; bounded train/val/DICIT smoke passed with the fixed lock, array check and timing before submission |
+| `ipdnet2_small_s42_v3` | queued 2026-11-16, no result yet | `runs/ipdnet2_small_s42`; bounded train/val/DICIT smoke (Mamba CUDA path) passed with the fixed lock, array check and timing before submission |
 
 **Early stopping (all rows).** `patience=6` counts validation rounds
 (`eval_every` epochs apart), matching LOCATA's `Trainer`; the package loop had
