@@ -94,34 +94,44 @@ def load_mic_positions(source: str) -> np.ndarray:
 
 def selected_positions(data_cfg: Dict[str, Any],
                        split: str) -> Tuple[str, np.ndarray, List[int]]:
-    """Geometry source label, full positions and validated indices for a split.
+    """Geometry source label, *selected* positions and validated indices.
 
-    Simulated train/val use ``<root>/dataset_meta.json``.  DICIT carries no
-    coordinates, so it falls back to the configured training geometry
-    (``[data].mic_positions_source``, or an explicit ``[data].mic_positions``).
+    Simulated train/val slice ``<root>/dataset_meta.json`` with
+    ``mic_indices``.  DICIT carries no coordinates, so it uses the configured
+    training geometry: an explicit ``[data].mic_positions`` is already the
+    selected ``(C, 3)`` array, while ``[data].mic_positions_source`` is sliced
+    with ``mic_indices``.
     """
     indices = resolve_mic_indices(data_cfg)
     if split in ("train", "val"):
         root = Path(data_cfg[f"{split}_root"])
         source = str(root / "dataset_meta.json")
         positions = load_mic_positions(source)
-    else:
-        if data_cfg.get("mic_positions") is not None:
-            source = "data.mic_positions"
-            positions = np.asarray(data_cfg["mic_positions"], dtype=np.float64)
-        elif data_cfg.get("mic_positions_source"):
-            source = str(data_cfg["mic_positions_source"])
-            positions = load_mic_positions(source)
-        else:
+        if max(indices) >= len(positions):
             raise ValueError(
-                "DICIT evaluation needs [data].mic_positions or "
-                "[data].mic_positions_source for the array geometry")
-    if positions.ndim != 2 or positions.shape[1] != 3:
-        raise ValueError(f"{source}: positions must be (C, 3), got {positions.shape}")
-    if max(indices) >= len(positions):
+                f"{source}: mic_indices {indices} exceed {len(positions)} mics")
+        selected = positions[indices]
+    elif data_cfg.get("mic_positions") is not None:
+        source = "data.mic_positions"
+        selected = np.asarray(data_cfg["mic_positions"], dtype=np.float64)
+        if len(selected) != len(indices):
+            raise ValueError(
+                f"[data].mic_positions is the selected array: got "
+                f"{len(selected)} mics for mic_indices {indices}")
+    elif data_cfg.get("mic_positions_source"):
+        source = str(data_cfg["mic_positions_source"])
+        positions = load_mic_positions(source)
+        if max(indices) >= len(positions):
+            raise ValueError(
+                f"{source}: mic_indices {indices} exceed {len(positions)} mics")
+        selected = positions[indices]
+    else:
         raise ValueError(
-            f"{source}: mic_indices {indices} exceed {len(positions)} mics")
-    return source, positions, indices
+            "DICIT evaluation needs [data].mic_positions or "
+            "[data].mic_positions_source for the array geometry")
+    if selected.ndim != 2 or selected.shape[1] != 3:
+        raise ValueError(f"{source}: positions must be (C, 3), got {selected.shape}")
+    return source, selected, indices
 
 
 def array_pair_vectors(positions, ref_mic: int = 0) -> np.ndarray:
@@ -176,8 +186,7 @@ def check_fixed_array(model, data_cfg: Dict[str, Any], *,
         "splits": {},
     }
     for split in splits:
-        source, dataset_positions, _ = selected_positions(data_cfg, split)
-        selected = dataset_positions[indices]
+        source, selected, _ = selected_positions(data_cfg, split)
         got = array_pair_vectors(selected, ref_mic)
         if not _compare_pair_vectors(expected, got):
             raise ValueError(
@@ -223,8 +232,7 @@ def check_eval_array(model, checkpoint_config: Dict[str, Any],
             raise ValueError(
                 "checkpoint records a different mic geometry than its own "
                 "model_config; the checkpoint is inconsistent")
-    source, dataset_positions, _ = selected_positions(data_cfg, split)
-    selected = dataset_positions[loader_indices]
+    source, selected, _ = selected_positions(data_cfg, split)
     expected = array_pair_vectors(positions, ref_mic)
     got = array_pair_vectors(selected, ref_mic)
     if not _compare_pair_vectors(expected, got):
