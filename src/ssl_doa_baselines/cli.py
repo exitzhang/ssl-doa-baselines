@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import torch
 
+from . import working_point
 from .api import build_model, load_model, predict
 from .config import deep_merge, load_toml, model_section
 from .training import fit
@@ -61,12 +62,19 @@ def _load_entry_config(paths: List[Optional[str]]) -> Dict:
 
 def cmd_predict(args) -> int:
     cfg = _load_entry_config([args.config, args.data_config])
+    if args.threshold_abs is not None and args.validation is not None:
+        raise SystemExit(
+            "[predict] pass only one of --threshold-abs and --validation")
     model = load_model(args.checkpoint, config=cfg, device=args.device,
                        strict=not args.allow_legacy)
+    name = getattr(model, "model_name", None)
+    if args.validation is not None and name not in _NEW_MODEL_NAMES:
+        raise SystemExit(
+            f"[predict] --validation is only used by {' / '.join(_NEW_MODEL_NAMES)}; "
+            f"{name} takes --threshold-abs / --threshold-ratio")
     audio = _read_audio(
         args.audio, _parse_channels(args.channels),
-        expected_sample_rate=_expected_sample_rate(
-            getattr(model, "model_name", None)))
+        expected_sample_rate=_expected_sample_rate(name))
     decode = dict(cfg.get("decode", {}))
     if args.max_sources is not None:
         decode["max_sources"] = args.max_sources
@@ -74,12 +82,25 @@ def cmd_predict(args) -> int:
         decode["threshold_abs"] = args.threshold_abs
     if args.threshold_ratio is not None:
         decode["threshold_ratio"] = args.threshold_ratio
+    validation = None
+    if args.validation is not None:
+        try:
+            locked = working_point.require_locked(
+                args.validation, model=name, checkpoint=args.checkpoint)
+        except working_point.WorkingPointError as exc:
+            raise SystemExit(f"[predict] {exc}")
+        decode["threshold_abs"] = float(locked["threshold"])
+        decode["score_kind"] = str(locked["score_kind"])
+        validation = str(Path(args.validation).resolve())
     detections = predict(model, audio, decode=decode, device=args.device)[0]
     result = {
         "audio": str(Path(args.audio).resolve()),
-        "model": getattr(model, "model_name", None),
+        "model": name,
         "detections": detections,
     }
+    if validation is not None:
+        result["validation"] = validation
+        result["locked_threshold"] = float(decode["threshold_abs"])
     text = json.dumps(result, indent=2, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(text)
@@ -192,6 +213,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-sources", type=int, default=None)
     p.add_argument("--threshold-abs", type=float, default=None)
     p.add_argument("--threshold-ratio", type=float, default=None)
+    p.add_argument("--validation", default=None,
+                   help="validation.json from train; reuses its locked "
+                        "threshold for ipdnet / ipdnet2_small")
     p.add_argument("--allow-legacy", action="store_true",
                    help="accept checkpoints without an embedded model_config")
     p.set_defaults(func=cmd_predict)
