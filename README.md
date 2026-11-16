@@ -54,6 +54,36 @@ detections = predict(model, waveform, decode={"threshold_abs": 0.3,
 `waveform` is `(T, C)` or `(B, T, C)` at 48 kHz.  Checkpoints written by
 `save_checkpoint` embed the model config and are reloadable without passing it.
 
+`ipdnet` and `ipdnet2_small` have no safe default operating point: `predict`
+requires an explicit finite `decode["threshold_abs"]` and raises before the
+forward pass when it is missing.  The value is normally the threshold locked on
+the simulated validation set (`validation.json["locked"]["threshold"]`); for
+IPDnet2-Small `-0.4` means "keep tracks with `MSE <= 0.4`".  `predict_native`
+still returns the raw tracks without thresholding.
+
+```python
+model = load_model("runs/ipdnet2_small_s42/checkpoint.pth", device="cuda")
+detections = predict(model, waveform, decode={"threshold_abs": -0.4})
+```
+
+The standalone CLI accepts either the explicit value or the validation file
+(the two are mutually exclusive):
+
+```bash
+ssl-doa-baselines predict \
+  --checkpoint runs/ipdnet2_small_s42/checkpoint.pth \
+  --audio clip.wav \
+  --validation runs/ipdnet2_small_s42/validation.json
+
+ssl-doa-baselines predict \
+  --checkpoint runs/ipdnet2_small_s42/checkpoint.pth \
+  --audio clip.wav --threshold-abs=-0.4
+```
+
+A `--validation` file is matched by checkpoint SHA-256 (copy/move invariant),
+model key, score kind and comparison direction; a file from another model or
+another epoch is rejected.
+
 Angles use **zenith elevation**: `u = [sin(el)cos(az), sin(el)sin(az), cos(el)]`,
 so a horizontal source has `el = 90`.  DICIT metadata already follows this.
 LOCATA simulated metadata stores elevation from the horizontal plane; the
@@ -119,7 +149,30 @@ with the locked point, per-source-count metrics, the full test curve and
 `R@FAR 3%` interpolation (only when two measured points bracket 3% FAR).
 It also stores `predictions.gt` / `predictions.pred` at the locked point (one
 angle set per frame, plain floats) so individual frames can be re-checked, plus
-`forward_ms_per_frame` and `decode_ms_per_frame`.
+`num_params` (counted from the rebuilt model), `forward_ms_per_frame`,
+`decode_ms_per_frame` and `inference_ms_per_clip`.
+
+`inference_ms_per_clip` is the unified end-to-end number: from a waveform
+already on the device to the per-clip angle set at the locked threshold,
+including the method's own front end, backbone, template matching and score
+filter.  Warm-up, device synchronisation and the batch size are the same for
+every method, and the denominator is the actual clip count (a short final
+batch is not rounded up).  Public scoring, disk reads and the full threshold
+sweep are excluded; the older `forward_ms_per_frame` and the IPDnet
+`frontend` / `template` breakdowns remain for profiling.
+
+For `ipdnet` / `ipdnet2_small`, DICIT evaluation **requires**
+`--validation` and fails before touching the dataset otherwise: the test
+threshold must be the one locked on the simulated validation set.  The locked
+point is merged into the reported test curve numerically, so a changed scan
+config or JSON key spelling cannot drop it.
+
+``eval --split val --output PATH`` writes the same `validation.json` that
+`train` produces (curve + identity-bearing lock), so a threshold can be
+regenerated for an existing checkpoint without retraining.  Training records
+`mic_indices`, `mic_positions` and `ref_mic` in the checkpoint config and run
+record; evaluation rejects a swapped channel order or a changed pair spacing,
+while allowing a translated copy of the same array.
 
 ### Metrics
 

@@ -67,17 +67,25 @@ interpolated on the DICIT P-R curve.  `FAR` is the pitch-accuracy-10 operating
 FAR.  The `working_point` block in each JSON is the *validation* lock; it is
 not a DICIT number.
 
-| Method | Run | F1@10° | 1-src F1 | 2-src F1 | 3-src F1 | FAR | R@FAR 3% | MAE (°) | Params | Forward ms |
+| Method | Run | F1@10° | 1-src F1 | 2-src F1 | 3-src F1 | FAR | R@FAR 3% | MAE (°) | Params | Forward ms³ |
 |---|---|---|---|---|---|---|---|---|---|---|
 | TF-Mamba (n_fft=1536) | `tf_mamba_s42` → `runs/tf_mamba_spectrum_s42` | **0.9338** | 0.7848 | 0.9515 | 0.9520 | 0.0782 | —¹ | **1.47** | 1.41 M | 3.40 |
 | TF-Mamba (n_fft=512) | `tf_mamba_512_s42` | 0.9294 | 0.8333 | 0.9522 | 0.9320 | **0.0630** | **0.7838** | 1.53 | 1.41 M | 3.41 |
 | SRP-DNN | `srp_dnn_s42` | 0.7665 | **0.8579** | 0.7850 | 0.7354 | 0.1343 | —² | 3.26 | 0.86 M | **1.78** |
-| IPDnet (fixed 3-mic, DP-IPD) | `ipdnet_s42` → `runs/ipdnet_s42` | pending | pending | pending | pending | pending | pending | pending | 0.35 M | pending |
-| IPDnet2-Small (fixed 3-mic, DP-IPD) | `ipdnet2_small_s42` → `runs/ipdnet2_small_s42` | pending | pending | pending | pending | pending | pending | pending | 1.25 M | pending |
+| IPDnet (fixed 3-mic, DP-IPD) | `ipdnet_s42` → `runs/ipdnet_s42` | pending | pending | pending | pending | pending | pending | pending | 725,248 | pending |
+| IPDnet2-Small (fixed 3-mic, DP-IPD) | `ipdnet2_small_s42` → `runs/ipdnet2_small_s42` | pending | pending | pending | pending | pending | pending | pending | 1,246,764 | pending |
 | IcoCNN (multi-source) | `icocnn_multi_s42` | — | — | — | — | — | — | — | 6.17 M | — |
 
 ¹ Lowest DICIT FAR on the TF-Mamba-1536 curve is 0.0308, just above the 3%
 target, so `R@FAR 3%` is not covered. ² SRP-DNN's lowest DICIT FAR is 0.0484.
+³ `Forward ms` is the pre-2026-11-16 measurement: method forward only,
+batch-normalised, without that method's own decoding/filtering (IPDnet's
+resampler/STFT front end and template matching were timed separately).  The
+three completed rows keep their historical number; the main table moves to the
+unified `inference_ms_per_clip` only once every row has been re-measured under
+the same scope.  `num_params` is now counted from the rebuilt checkpoint in
+each new `eval_*.json`; the IPDnet value 725,248 replaces the earlier
+hand-written 0.35 M.
 
 Thresholds locked on validation: TF-Mamba-1536 `0.3`, TF-Mamba-512 `0.3`,
 SRP-DNN `0.45`.  Accuracy-threshold breakdown at those locked points:
