@@ -98,20 +98,25 @@ each new `eval_*.json`; the IPDnet value 725,248 replaces the earlier
 hand-written 0.35 M.
 
 Thresholds locked on validation: TF-Mamba-1536 `0.3`, TF-Mamba-512 `0.3`,
-SRP-DNN `0.45`.  Accuracy-threshold breakdown at those locked points:
+SRP-DNN `0.45`, IPDnet `0.5`.  Accuracy-threshold breakdown at those locked
+points:
 
 | Method | F1@5° | F1@10° | F1@15° | MAE@10 (°) |
 |---|---|---|---|---|
 | TF-Mamba 1536 | 0.8845 | 0.9338 | 0.9396 | 1.47 |
 | TF-Mamba 512 | 0.8733 | 0.9294 | 0.9348 | 1.53 |
 | SRP-DNN | 0.5822 | 0.7665 | 0.8287 | 3.26 |
+| IPDnet (3-mic) | 0.8806 | 0.9274 | 0.9337 | 1.49 |
 
 **Reading.**  The two TF-Mamba front ends are effectively tied on DICIT
 (ΔF1@10 = −0.004, ΔMAE = +0.06°), so the 1536/480 vs 512/480 STFT choice is not
 what limits this baseline.  SRP-DNN trails by ~0.17 F1@10 and ~1.8° MAE; its
 only win is the 1-source F1 (0.858 vs 0.785/0.833) and the ~1.8 ms forward,
-since the other two spend 3.4 ms.  All three produce varied outputs
-(`unique_frames` 768 / 820 / 840 of 926), so none is in the collapsed regime.
+since the other two spend 3.4 ms.  IPDnet (3-mic) lands within 0.002 F1@10 and
+0.04° MAE of TF-Mamba-512 at 1.25 ms/clip, decoding three clip-level DP-IPD
+tracks instead of a per-frame heat map.  All four produce varied outputs
+(`unique_frames` 768 / 820 / 840 / 545 of 926), so none is in the collapsed
+regime.
 
 ## Validation working points
 
@@ -120,7 +125,7 @@ since the other two spend 3.4 ms.  All three produce varied outputs
 | TF-Mamba (1536) | 0.30 | 0.9152 | 0.0357 |
 | TF-Mamba (512) | 0.30 | 0.8874 | 0.0439 |
 | SRP-DNN | 0.45 | 0.7006 | 0.1657 |
-| IPDnet | pending | pending | pending |
+| IPDnet | 0.50 | 0.9012 | 0.0468 |
 | IPDnet2-Small | pending | pending | pending |
 | IcoCNN | — | — | — |
 
@@ -137,8 +142,8 @@ the validation numbers by construction (`_eval_payload` in
 | `srp_dnn_s42` | **done 2026-11-13 05:12** (`runs/srp_dnn_s42`) | `srp_dnn_dicit.toml` (win 1536 / hop 768 / n_fft 1536, 100–8000 Hz, 100 epochs / patience 6 / seed 42, five-block forward) | Main-table SRP-DNN row; replaced the aborted 4-block run. |
 | `tf_mamba_512_s42` | **done 2026-11-15 00:40** (`runs/tf_mamba_512_s42`) | `tf_mamba_dicit_512.toml`: `n_fft=512`, `hop_length=480`, 100–8000 Hz (84 bins), 3 mics, Q=181, 100 epochs / patience 6 / seed 42 | Front-end ablation against the 1536/480 run. The 512 front end is 10.7 ms / 93.75 Hz, not the paper's 32 ms / 31.25 Hz, so it is an adapted setting. |
 | `tf_mamba_s42` | **done 2026-11-14 15:45** (`runs/tf_mamba_spectrum_s42`) | `n_fft=1536`, `hop_length=480`, Q=181, 100 epochs / patience 6 / seed 42, fp32 batch 8, `label_sigma=3.0` | Main-table TF-Mamba row. |
-| `ipdnet_s42` | **queued v3** (`queue/ipdnet_512_s42_v3.json`) | `ipdnet_dicit.toml`: 48->16 kHz, 512 FFT / hop 256, 3 tracks, Adam lr 5e-4, exponential 0.975, 100 epochs / patience 6 / seed 42 | Main-table IPDnet row; clip-level DP-IPD PIT, projection-ratio decode. |
-| `ipdnet2_small_s42` | **queued v3** (`queue/ipdnet2_small_512_s42_v3.json`) | `ipdnet2_small_dicit.toml`: 48->16 kHz, 512 FFT / hop 320, 8 layers / hidden 96 / `mamba(16,4)`, AdamW, 100 epochs / patience 6 / seed 42 | Main-table IPDnet2-Small row; negative-MSE decode. Needs the `locata` env's `mamba-ssm==2.1.0`. |
+| `ipdnet_s42` | **done 2026-11-17 10:59** (`runs/ipdnet_s42`) | `ipdnet_dicit.toml`: 48->16 kHz, 512 FFT / hop 256, 3 tracks, Adam lr 5e-4, exponential 0.975, 100 epochs / patience 6 / seed 42 | Main-table IPDnet row; clip-level DP-IPD PIT, projection-ratio decode. Ran all 100 epochs; validation locked 0.5, DICIT F1@10 0.9274. |
+| `ipdnet2_small_s42` | **queued v4** (`queue/ipdnet2_small_512_s42_v4.json`) | `ipdnet2_small_dicit.toml`: 48->16 kHz, 512 FFT / hop 320, 8 layers / hidden 96 / `mamba(16,4)`, AdamW, 100 epochs / patience 6 / seed 42 | Main-table IPDnet2-Small row; negative-MSE decode. Needs the `locata` env's `mamba-ssm==2.1.0`. v4 carries the vectorised `FreqInverse` (~1085 -> ~960 s/epoch measured). |
 | `icocnn_multi_s42` | backlog; **run when a GPU is idle** (too slow to share one) | reference head (last conv → `M` + Soft-ArgMax), `lr 1e-4`, cross-pair-only SRP maps, 100 epochs / patience 6 / seed 42 | Main-table IcoCNN row. ~37 min/epoch with GPU1 at 2/2 slots vs ~24 min solo; the paused epoch-1 attempt was healthy (train 0.0224 / val 0.0212). |
 
 ## Run log
@@ -171,8 +176,9 @@ cited as results.
 | `ipdnet2_small_s42` | canceled before start — worktree refreshed to the final commit | never ran; resubmitted as `ipdnet2_small_s42_v2` |
 | `ipdnet_s42_v2` | canceled 2026-11-16 before start — review fix (validation lock / array contract); resubmitted as v3 | never ran |
 | `ipdnet2_small_s42_v2` | canceled 2026-11-16 before start — review fix (validation lock / array contract); resubmitted as v3 | never ran |
-| `ipdnet_s42_v3` | queued 2026-11-16, no result yet | `runs/ipdnet_s42`; bounded train/val/DICIT smoke passed with the fixed lock, array check and timing before submission |
-| `ipdnet2_small_s42_v3` | queued 2026-11-16, no result yet | `runs/ipdnet2_small_s42`; bounded train/val/DICIT smoke (Mamba CUDA path) passed with the fixed lock, array check and timing before submission |
+| `ipdnet_s42_v3` | **done 2026-11-17 10:59 — canonical `ipdnet_s42`** | `runs/ipdnet_s42`; all 100 epochs, validation locked 0.5 (F1@10 0.9012, FAR 0.0468); DICIT F1@10 0.9274 / MAE 1.49 / 1.25 ms per clip |
+| `ipdnet2_small_s42_v3` | aborted — host-dispatch bound, ~1085 s/epoch; canceled at epoch 26 to ship the vectorised `FreqInverse` | `aborted/ipdnet2_slow_20261117/`; 2450 kernel launches per step vs IPDnet's 373 (GPU kernel time was lower, 16.5 vs 19.7 ms), so the step was CPU/launch bound, not GPU bound. Rejected speedups: `causal-conv1d`'s fused `mamba_inner` is slower at the post-pooling `T=4` (2.6 -> 4.2 ms per call, full step a wash), and `torch.compile(mode="reduce-overhead")` measured 70 vs 61 ms per step. No result cited |
+| `ipdnet2_small_s42_v4` | **running since 2026-11-17 11:04** (`queue/ipdnet2_small_512_s42_v4.json`) | `runs/ipdnet2_small_s42`; same recipe as v3 plus the vectorised `FreqInverse`; ~960 s/epoch measured end to end |
 
 **Early stopping (all rows).** `patience=6` counts validation rounds
 (`eval_every` epochs apart), matching LOCATA's `Trainer`; the package loop had
