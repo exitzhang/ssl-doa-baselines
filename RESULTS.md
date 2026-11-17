@@ -4,13 +4,15 @@ Protocol: 48 kHz, 16,000-sample clips, mics `5,6,8`, azimuth 0°–180°,
 10° one-to-one matching, azimuth-only MAE.  Operating points are locked on the
 simulated validation set; DICIT curves are reported separately.
 
-**Status 2026-11-16.** Three runs are complete and evaluated on DICIT:
-`tf_mamba_s42` (n_fft=1536), `tf_mamba_512_s42`, `srp_dnn_s42`.  IcoCNN has
-**no completed run** — every attempt so far is aborted or paused (see the run
-log), so its main-table row stays empty.  Two new rows are queued as v3:
-`ipdnet_s42` and `ipdnet2_small_s42` (fixed 3-microphone ports of
-`FN-SSL@76fcb281`, clip-level DP-IPD PIT; see `THIRD_PARTY.md`).  Their cells
-stay `pending` until the validation lock and DICIT evaluation finish.
+**Status 2026-11-17.** Four runs are complete and evaluated on DICIT:
+`tf_mamba_s42` (n_fft=1536), `tf_mamba_512_s42`, `srp_dnn_s42` and
+`ipdnet_s42`.  `ipdnet2_small_s42` (fixed 3-microphone ports of
+`FN-SSL@76fcb281`, clip-level DP-IPD PIT; see `THIRD_PARTY.md`) has **no
+result**: v3 was canceled at epoch 26 because the step is host-launch bound
+(~1085 s/epoch), v4 ran 12 epochs with a vectorised `FreqInverse` and was
+paused on request; the `pending v4` manifest is kept for a later submission.
+IcoCNN has **no completed run** — every attempt so far is aborted or paused
+(see the run log), so its main-table row stays empty.
 
 **Review fix 2026-11-16.** The IPDnet rows now run under the corrected
 contract: the DICIT point is the threshold locked on the simulated validation
@@ -46,6 +48,7 @@ sample budget are recorded in each `config.json`.  Completion:
 | `tf_mamba_spectrum_s42` (1536) | epoch 100 | ran the full budget, best checkpoint at the last validation round |
 | `tf_mamba_512_s42` | epoch 85 | early stopped, 6/6 patience exhausted |
 | `srp_dnn_s42` | epoch 95 | early stopped, best validation loss 0.218812 |
+| `ipdnet_s42` | epoch 100 | ran the full budget, best validation loss 0.046565 |
 
 The 15-epoch first pass was abandoned: the V5 mainline (B0/Parallel) picks its
 best epoch around 30 and early-stops at 60, so 15 epochs left the external
@@ -66,8 +69,8 @@ is additive coarse-to-fine support that is inert when `coarse_supervision` /
 `coarse_heatmap_creator` are `None`, so the TF-Mamba and IcoCNN rows remain
 comparable; the aborted SRP-DNN run was affected by neither commit.  From now
 on every process (including the eval step) imports the pinned commit.  The
-completed `srp_dnn_s42` / `tf_mamba_512_s42` / `tf_mamba_spectrum_s42` runs all
-record `d5e7c5d` with `dirty: false`.
+completed `srp_dnn_s42` / `tf_mamba_512_s42` / `tf_mamba_spectrum_s42` /
+`ipdnet_s42` runs all record `d5e7c5d` with `dirty: false`.
 
 ## DICIT test — locked validation working point
 
@@ -80,21 +83,22 @@ not a DICIT number.
 | Method | Run | F1@10° | 1-src F1 | 2-src F1 | 3-src F1 | FAR | R@FAR 3% | MAE (°) | Params | Forward ms³ |
 |---|---|---|---|---|---|---|---|---|---|---|
 | TF-Mamba (n_fft=1536) | `tf_mamba_s42` → `runs/tf_mamba_spectrum_s42` | **0.9338** | 0.7848 | 0.9515 | 0.9520 | 0.0782 | —¹ | **1.47** | 1.41 M | 3.40 |
-| TF-Mamba (n_fft=512) | `tf_mamba_512_s42` | 0.9294 | 0.8333 | 0.9522 | 0.9320 | **0.0630** | **0.7838** | 1.53 | 1.41 M | 3.41 |
+| TF-Mamba (n_fft=512) | `tf_mamba_512_s42` | 0.9294 | 0.8333 | 0.9522 | 0.9320 | **0.0630** | 0.7838 | 1.53 | 1.41 M | 3.41 |
 | SRP-DNN | `srp_dnn_s42` | 0.7665 | **0.8579** | 0.7850 | 0.7354 | 0.1343 | —² | 3.26 | 0.86 M | **1.78** |
-| IPDnet (fixed 3-mic, DP-IPD) | `ipdnet_s42` → `runs/ipdnet_s42` | pending | pending | pending | pending | pending | pending | pending | 725,248 | pending |
+| IPDnet (fixed 3-mic, DP-IPD) | `ipdnet_s42` → `runs/ipdnet_s42` | 0.9274 | 0.8093 | 0.9432 | 0.9398 | 0.0752 | **0.8123** | 1.49 | 725,248 | 0.89 |
 | IPDnet2-Small (fixed 3-mic, DP-IPD) | `ipdnet2_small_s42` → `runs/ipdnet2_small_s42` | pending | pending | pending | pending | pending | pending | pending | 1,246,764 | pending |
 | IcoCNN (multi-source) | `icocnn_multi_s42` | — | — | — | — | — | — | — | 6.17 M | — |
 
 ¹ Lowest DICIT FAR on the TF-Mamba-1536 curve is 0.0308, just above the 3%
 target, so `R@FAR 3%` is not covered. ² SRP-DNN's lowest DICIT FAR is 0.0484.
-³ `Forward ms` is the pre-2026-11-16 measurement: method forward only,
-batch-normalised, without that method's own decoding/filtering (IPDnet's
-resampler/STFT front end and template matching were timed separately).  The
-three completed rows keep their historical number; the main table moves to the
-unified `inference_ms_per_clip` only once every row has been re-measured under
-the same scope.  `num_params` is now counted from the rebuilt checkpoint in
-each new `eval_*.json`; the IPDnet value 725,248 replaces the earlier
+³ `Forward ms` is the method forward only, batch-normalised, without that
+method's own decoding/filtering.  The three pre-2026-11-16 rows keep their
+historical number; IPDnet's 0.89 ms is its `forward_ms_per_frame` (the
+resampler/STFT front end and template matching are timed separately) and the
+unified `inference_ms_per_clip` for the same checkpoint is 1.25 ms.  The main
+table moves to the unified number only once every row has been re-measured
+under the same scope.  `num_params` is now counted from the rebuilt checkpoint
+in each new `eval_*.json`; the IPDnet value 725,248 replaces the earlier
 hand-written 0.35 M.
 
 Thresholds locked on validation: TF-Mamba-1536 `0.3`, TF-Mamba-512 `0.3`,
@@ -113,7 +117,8 @@ points:
 what limits this baseline.  SRP-DNN trails by ~0.17 F1@10 and ~1.8° MAE; its
 only win is the 1-source F1 (0.858 vs 0.785/0.833) and the ~1.8 ms forward,
 since the other two spend 3.4 ms.  IPDnet (3-mic) lands within 0.002 F1@10 and
-0.04° MAE of TF-Mamba-512 at 1.25 ms/clip, decoding three clip-level DP-IPD
+0.04° MAE of TF-Mamba-512 with a higher R@FAR 3% (0.812 vs 0.784) at 1.25 ms
+per clip in the unified end-to-end timing, decoding three clip-level DP-IPD
 tracks instead of a per-frame heat map.  All four produce varied outputs
 (`unique_frames` 768 / 820 / 840 / 545 of 926), so none is in the collapsed
 regime.
@@ -185,7 +190,7 @@ cited as results.
 been counting every epoch and using the training loss as the monitor on
 non-eval epochs, so IcoCNN could stop after ~3 validation rounds. Fixed on
 2026-11-12 (covered by `tests/test_training.py`); the paused IcoCNN attempt is
-the first run with the corrected semantics.  The three completed runs use the
+the first run with the corrected semantics.  All four completed runs use the
 corrected semantics.
 
 **IcoCNN invalidation (carried forward).**  The first attempt is **aborted**:

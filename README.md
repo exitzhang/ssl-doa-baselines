@@ -1,6 +1,6 @@
 # ssl-doa-baselines
 
-Independent implementations of three external multi-source DOA baselines, with
+Independent implementations of five external multi-source DOA baselines, with
 a thin LOCATA adapter that reuses LOCATA's own datasets, trainer and scorer.
 
 | Key | Model | Native output | Decoder |
@@ -26,7 +26,9 @@ pip install mamba-ssm==2.1.0 --no-build-isolation   # if not already present
 build.  `ipdnet` and `ipdnet2_small` additionally need `torchaudio`
 (`pip install -e ".[ipdnet]"` / `".[ipdnet2]"`); the other models run on CPU
 (slowly) or GPU.  The combination verified here is torch 2.2.1 /
-torchaudio 2.2.1 / CUDA 11.8.
+torchaudio 2.2.1 / CUDA 11.8.  `causal-conv1d` is **not** required: it only
+enables `mamba-ssm`'s fused `mamba_inner` path, which measured slower for this
+model at the post-pooling sequence length (see `RESULTS.md`).
 
 The two IPDnet ports share a 48 kHz -> 16 kHz resampler, 512-point Hann/FFT
 front end (`center=False`, explicit right pad), per-track DP-IPD targets with
@@ -228,14 +230,16 @@ python -m gpu_queue submit /path/to/Record/queue/state jobs.json
 ```
 
 Submit `icocnn_multi_s42`, `srp_dnn_s42`, `ipdnet_s42` and
-`ipdnet2_small_s42` the same way with their configs.  The two IPDnet manifests
-are `queue/ipdnet_512_s42.json` and `queue/ipdnet2_small_512_s42.json`.
+`ipdnet2_small_s42` the same way with their configs.  The IPDnet manifests are
+`queue/ipdnet_512_s42_v3.json` (done) and `queue/ipdnet2_small_512_s42_v4.json`
+(pending, not submitted).
 
-Both IPDnet jobs run from a dedicated detached worktree,
-`/home/t-zhangchaoqin/projects/ssl/wt/ssl-doa-baselines-ipdnet`, pinned at the
-integration merge commit, so code cannot change under a running job.  The
-machine-local, git-ignored `data_local.toml` and the artifact root are passed
-by absolute path into the main checkout; `runs/ipdnet_s42` and
+Both IPDnet jobs run from a dedicated worktree,
+`/home/t-zhangchaoqin/projects/ssl/wt/ssl-doa-baselines-ipdnet` (branch
+`fix/ipdnet-review-fix`, which carries the review fix and the vectorised
+`FreqInverse`), so code cannot change under a running job without a commit.
+The machine-local, git-ignored `data_local.toml` and the artifact root are
+passed by absolute path into the main checkout; `runs/ipdnet_s42` and
 `runs/ipdnet2_small_s42` therefore stay in the indexed checkout.
 
 ### IPDnet provenance
@@ -248,7 +252,7 @@ here.
 
 ### Shared training budget
 
-All three methods run `--epochs 100` with `patience 6` eval rounds of early
+All five rows run `--epochs 100` with `patience 6` eval rounds of early
 stopping and seed 42, so they see the same sample budget.  A 15-epoch first
 pass was dropped: the V5 mainline (B0 / Parallel) picks its best epoch around
 30 and early-stops at 60, so 15 epochs sat at roughly a quarter of the
@@ -294,20 +298,24 @@ V5 mainline picks its best epoch around 30, so 15 epochs sat at a quarter of
 the comparison budget.  TF-Mamba's `_dev` run also hit an fp16 overflow, and
 IcoCNN's ran on a pathologically slow version of the vendored layers.
 
-The current canonical runs are `tf_mamba_s42` (artifact
-`runs/tf_mamba_spectrum_s42`, running on GPU0) and `icocnn_multi_s42` (paused
-after epoch 1 — too slow to share a GPU; see `RESULTS.md`).  Both queued jobs
-use 100 epochs / `patience 6` / seed 42 on `gpu_queue`:
+Canonical runs and their DICIT results (threshold locked on simulated
+validation; full tables, per-source counts and the run log are in
+`RESULTS.md`):
 
-- `srp_dnn_s42` (`queue/srp_dnn_2026-11-12.json`, GPU1): reruns the recipe with
-  the fixed forward.  The previous run executed only four of the five CRNN
-  blocks (`zip(self.blocks, self.pools)` stops after the four pools), so its
-  artifacts are archived under `aborted/srp_dnn_block5_20261112/` and its
-  metrics are not cited.
-- `tf_mamba_512_s42` (`queue/tf_mamba_512_2026-11-12.json`, GPU1): the
-  `n_fft=512` front-end variant, `tf_mamba_dicit_512.toml`, against the
-  running 1536/480 run.
+| Method | Run | DICIT F1@10° | MAE (°) | Status |
+|---|---|---|---|---|
+| TF-Mamba (n_fft=1536) | `runs/tf_mamba_spectrum_s42` | **0.9338** | **1.47** | done 2026-11-14, 100 epochs |
+| TF-Mamba (n_fft=512) | `runs/tf_mamba_512_s42` | 0.9294 | 1.53 | done 2026-11-15, early stop at epoch 85 |
+| SRP-DNN | `runs/srp_dnn_s42` | 0.7665 | 3.26 | done 2026-11-13, early stop at epoch 95 |
+| IPDnet (fixed 3-mic) | `runs/ipdnet_s42` | 0.9274 | 1.49 | done 2026-11-17, 100 epochs |
+| IPDnet2-Small (fixed 3-mic) | `queue/ipdnet2_small_512_s42_v4.json` | pending | pending | paused; resubmit the v4 manifest |
+| IcoCNN (multi-source) | backlog; last attempt `aborted/icocnn_slow_20261112` | — | — | needs an idle GPU (~24 min/epoch solo) |
 
-Both are pending until a GPU1 slot frees.  Every attempt's status is recorded
-in the `RESULTS.md` run log; job ids in historical `queue/` files keep their
-original `_vN` names.
+Every attempt's status is recorded in the `RESULTS.md` run log; job ids in
+historical `queue/` files keep their original `_vN` names.
+
+IPDnet2-Small trains at ~960–1085 s/epoch because its step is host-launch
+bound: ~2450 kernel launches per step against IPDnet's 373, with *less* GPU
+kernel time than IPDnet (16.5 vs 19.7 ms).  The vectorised `FreqInverse`
+(`67cc6b2`) is worth ~6% on this loaded box; the full measurement and the
+rejected speedups (`causal-conv1d`, `torch.compile`) are in `RESULTS.md`.
