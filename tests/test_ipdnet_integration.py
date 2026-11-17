@@ -136,6 +136,32 @@ def test_ipdnet2_small_forward_shapes():
     assert np.allclose(elevation, 90.0)
 
 
+def test_ipdnet2_freq_inverse_matches_the_authors_loop():
+    from ssl_doa_baselines.ipdnet2.backbone import FreqInverse
+
+    def authors_loop(layer, x):
+        out = torch.zeros([x.shape[0], layer.out_dim, layer.nfreq, x.shape[2]],
+                          dtype=x.dtype, layout=x.layout, device=x.device)
+        for freq_inx in range(layer.nfilters):
+            start, end = layer.bounds[freq_inx], layer.bounds[freq_inx + 1]
+            out[:, :, start:end, :] = out[:, :, start:end, :] + \
+                layer.trans2(x[:, :, :, freq_inx]).reshape(
+                    x.shape[0], layer.out_dim, -1, x.shape[-2])
+        return out.permute(0, 1, 3, 2).contiguous().tanh()
+
+    torch.manual_seed(0)
+    layer = FreqInverse(nfreq=64, compression_ratio=16, hidden_dim=8, out_dim=4)
+    x = torch.randn(2, 8, 3, 4)
+    x_fast = x.clone().requires_grad_(True)
+    x_ref = x.clone().requires_grad_(True)
+    got = layer(x_fast)
+    want = authors_loop(layer, x_ref)
+    assert torch.allclose(got, want, atol=1e-6)
+    grad, = torch.autograd.grad(got.sum(), x_fast)
+    grad_ref, = torch.autograd.grad(want.sum(), x_ref)
+    assert torch.allclose(grad, grad_ref, atol=1e-6)
+
+
 def test_shared_tracks_separate_from_models():
     tracks = TrackDPIPD(np.asarray(MIC), np.arange(1, 257) * 16000 / 512,
                         n_az=37, pool_factor=5)
