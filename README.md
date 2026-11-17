@@ -234,12 +234,14 @@ Submit `icocnn_multi_s42`, `srp_dnn_s42`, `ipdnet_s42` and
 `queue/ipdnet_512_s42_v3.json` (done) and `queue/ipdnet2_small_512_s42_v4.json`
 (pending, not submitted).
 
-Both IPDnet jobs run from a dedicated worktree,
+Both IPDnet jobs ran from a dedicated worktree,
 `/home/t-zhangchaoqin/projects/ssl/wt/ssl-doa-baselines-ipdnet` (branch
-`fix/ipdnet-review-fix`, which carries the review fix and the vectorised
-`FreqInverse`), so code cannot change under a running job without a commit.
-The machine-local, git-ignored `data_local.toml` and the artifact root are
-passed by absolute path into the main checkout; `runs/ipdnet_s42` and
+`fix/ipdnet-review-fix`), so code could not change under a running job without
+a commit.  That worktree was removed on 2026-11-17 after its 18 commits were
+merged into `feat/external-baselines`; recreate one before submitting the
+pending `ipdnet2_small_s42` v4 manifest, whose `cwd` still points at the old
+path.  The machine-local, git-ignored `data_local.toml` and the artifact root
+are passed by absolute path into the main checkout; `runs/ipdnet_s42` and
 `runs/ipdnet2_small_s42` therefore stay in the indexed checkout.
 
 ### IPDnet provenance
@@ -308,7 +310,7 @@ validation; full tables, per-source counts and the run log are in
 | TF-Mamba (n_fft=512) | `runs/tf_mamba_512_s42` | 0.9294 | 1.53 | done 2026-11-15, early stop at epoch 85 |
 | SRP-DNN | `runs/srp_dnn_s42` | 0.7665 | 3.26 | done 2026-11-13, early stop at epoch 95 |
 | IPDnet (fixed 3-mic) | `runs/ipdnet_s42` | 0.9274 | 1.49 | done 2026-11-17, 100 epochs |
-| IPDnet2-Small (fixed 3-mic) | `queue/ipdnet2_small_512_s42_v4.json` | pending | pending | paused; resubmit the v4 manifest |
+| IPDnet2-Small (fixed 3-mic) | `queue/ipdnet2_small_512_s42_v4.json` | pending | pending | paused; resubmit the v4 manifest from a fresh worktree |
 | IcoCNN (multi-source) | backlog; last attempt `aborted/icocnn_slow_20261112` | — | — | needs an idle GPU (~24 min/epoch solo) |
 
 Every attempt's status is recorded in the `RESULTS.md` run log; job ids in
